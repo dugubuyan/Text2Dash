@@ -14,6 +14,7 @@ class SavedReport(Base, TimestampMixin):
     description = Column(Text, nullable=True)
     query_plan = Column(Text, nullable=False)  # JSON: 包含SQL和MCP工具调用
     chart_config = Column(Text, nullable=False)  # JSON
+    summary = Column(Text, nullable=True)  # 第一次生成的summary
     original_query = Column(Text, nullable=True)
     data_source_ids = Column(Text, nullable=False)  # JSON array: 数据库和MCP Server ID
 

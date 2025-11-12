@@ -32,8 +32,6 @@ class QueryPlan(BaseModel):
     """查询计划"""
     no_data_source_match: bool = False  # 是否无法匹配数据源
     user_message: Optional[str] = None  # 给用户的友好提示信息
-    use_temp_table: bool = False  # 是否使用 session 临时表
-    temp_table_name: Optional[str] = None  # 临时表名
     sql_queries: List[SQLQuery] = Field(default_factory=list)
     mcp_calls: List[MCPCall] = Field(default_factory=list)
     needs_combination: bool = False

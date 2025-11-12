@@ -191,8 +191,6 @@ class LLMService:
             return QueryPlan(
                 no_data_source_match=cached_result.get("no_data_source_match", False),
                 user_message=cached_result.get("user_message"),
-                use_temp_table=cached_result.get("use_temp_table", False),
-                temp_table_name=cached_result.get("temp_table_name"),
                 sql_queries=[SQLQuery(**q) for q in cached_result.get("sql_queries", [])],
                 mcp_calls=[MCPCall(**c) for c in cached_result.get("mcp_calls", [])],
                 needs_combination=cached_result.get("needs_combination", False),
@@ -248,8 +246,6 @@ class LLMService:
             query_plan = QueryPlan(
                 no_data_source_match=plan_data.get("no_data_source_match", False),
                 user_message=plan_data.get("user_message"),
-                use_temp_table=plan_data.get("use_temp_table", False),
-                temp_table_name=plan_data.get("temp_table_name"),
                 sql_queries=[SQLQuery(**q) for q in plan_data.get("sql_queries", [])],
                 mcp_calls=[MCPCall(**c) for c in plan_data.get("mcp_calls", [])],
                 needs_combination=plan_data.get("needs_combination", False),
@@ -258,8 +254,6 @@ class LLMService:
             
             logger.info(
                 f"查询计划生成成功: no_match={query_plan.no_data_source_match}, "
-                f"use_temp_table={query_plan.use_temp_table}, "
-                f"temp_table={query_plan.temp_table_name}, "
                 f"{len(query_plan.sql_queries)} SQL查询, "
                 f"{len(query_plan.mcp_calls)} MCP调用, "
                 f"需要组合: {query_plan.needs_combination}"
@@ -271,8 +265,6 @@ class LLMService:
                 {
                     "no_data_source_match": query_plan.no_data_source_match,
                     "user_message": query_plan.user_message,
-                    "use_temp_table": query_plan.use_temp_table,
-                    "temp_table_name": query_plan.temp_table_name,
                     "sql_queries": [
                         {
                             "db_config_id": q.db_config_id,
@@ -321,7 +313,7 @@ class LLMService:
         
         # 添加 session 临时表信息（如果有）
         if session_temp_tables:
-            prompt += "## Session 临时表（历史查询结果）\n\n"
+            prompt += "## Session 临时表（历史查询结果，SQLite格式）\n\n"
             for temp_table in session_temp_tables:
                 prompt += f"### 表名: {temp_table['table_name']}\n"
                 prompt += f"来源查询: {temp_table.get('user_query', 'Unknown')}\n"
@@ -335,15 +327,24 @@ class LLMService:
         if db_schemas:
             prompt += "## 数据库\n\n"
             for db_id, schema in db_schemas.items():
+                db_type = schema.get('type', 'Unknown')
                 prompt += f"### 数据库ID: {db_id}\n"
                 prompt += f"名称: {schema.get('name', 'Unknown')}\n"
-                prompt += f"类型: {schema.get('type', 'Unknown')}\n"
-                prompt += "表结构:\n"
-                tables = schema.get('tables', {})
-                for table_name, columns in tables.items():
-                    column_names = [col['name'] for col in columns]
-                    prompt += f"  - {table_name}: {', '.join(column_names)}\n"
-                prompt += "\n"
+                prompt += f"**类型: {db_type.upper()}**\n"
+                
+                # 如果有schema描述文件，使用描述文件内容
+                if 'schema_description' in schema:
+                    prompt += "数据库结构描述:\n"
+                    prompt += schema['schema_description']
+                    prompt += "\n\n"
+                else:
+                    # 否则使用表结构信息
+                    prompt += "表结构:\n"
+                    tables = schema.get('tables', {})
+                    for table_name, columns in tables.items():
+                        column_names = [col['name'] for col in columns]
+                        prompt += f"  - {table_name}: {', '.join(column_names)}\n"
+                    prompt += "\n"
         
         # 添加MCP工具信息
         if mcp_tools:
@@ -364,11 +365,9 @@ class LLMService:
 {
   "no_data_source_match": false,
   "user_message": null,
-  "use_temp_table": false,
-  "temp_table_name": null,
   "sql_queries": [
     {
-      "db_config_id": "数据库ID",
+      "db_config_id": "数据库ID或'__session__'（临时表）",
       "sql": "SQL查询语句",
       "source_alias": "结果别名"
     }
@@ -385,42 +384,20 @@ class LLMService:
   "combination_strategy": "组合策略说明（如需要）"
 }
 
-规则：
-1. 判断用户查询是否与可用数据源相关：
-   - 如果查询内容与所有数据源都无关，设置 no_data_source_match=true，user_message="抱歉，在当前配置的数据源中无法找到与您查询相关的信息"
-   - 如果查询与数据源相关，设置 no_data_source_match=false，user_message=null
+核心规则：
 
-2. **智能判断是否使用临时表**：
-   - 如果用户查询可以直接使用 session 临时表（历史查询结果）回答，设置 use_temp_table=true，temp_table_name="表名"
-   - 例如："显示前10条"、"按某列排序"、"筛选某个条件"、"统计总数"等操作
-   - 此时 sql_queries 和 mcp_calls 应为空数组
-   - 如果需要新的数据查询，设置 use_temp_table=false
+1. **数据源选择**：
+   - 查询临时表：db_config_id="__session__"
+   - 查询数据库：使用对应的 db_config_id
+   - 查询与所有数据源无关时：设置 no_data_source_match=true
 
-3. **重要：多步骤查询处理**：
-   - 如果查询需要多个步骤，且后续步骤依赖前面步骤的结果，必须将所有逻辑合并到单个SQL查询中
-   - **禁止**在 sql_queries 数组中的后续查询引用前面查询的 source_alias，因为这些别名不会自动创建为临时表
-   - 使用 SQL 子查询（subquery）或 CTE（WITH 子句）来实现多步骤逻辑
-   - 例如：查询"成绩最好的3个学生所在的院系"应该写成单个SQL：
-     SELECT DISTINCT d.* 
-     FROM Departments d 
-     JOIN Courses c ON d.department_id = c.department_id 
-     JOIN Course_Sections cs ON c.course_id = cs.course_id 
-     JOIN Student_Enrollments se ON cs.section_id = se.section_id 
-     JOIN (
-       SELECT s.student_id 
-       FROM Students s 
-       JOIN Student_Enrollments se ON s.student_id = se.student_id 
-       JOIN Exams e ON se.section_id = e.section_id 
-       JOIN Exam_Scores es ON e.exam_id = es.exam_id 
-       GROUP BY s.student_id 
-       ORDER BY AVG(es.score) DESC 
-       LIMIT 3
-     ) AS top_students ON se.student_id = top_students.student_id
+2. **SQL生成**：
+   - 只生成 SELECT 查询
+   - **根据数据库类型使用对应的SQL方言**（注意不同数据库的语法差异）
+   - 多步骤查询使用子查询或 CTE，禁止引用其他查询的 source_alias
+   - 聚合函数必须指定别名（如 COUNT(*) AS total_count）
 
-4. 当 no_data_source_match=true 时，sql_queries 和 mcp_calls 应为空数组
-5. 只生成SELECT查询
-6. 多数据源查询时设置needs_combination为true（仅当需要从不同数据库或MCP源组合数据时）
-7. 计算字段和聚合函数必须使用 AS 指定别名（如 COUNT(*) AS total_count），别名使用小写字母和下划线，不要包含特殊字符
+3. **数据组合**：仅当跨数据库或跨MCP源时，设置 needs_combination=true
 """
         
         return prompt

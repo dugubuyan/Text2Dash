@@ -246,7 +246,8 @@ class DataSourceManager:
         logger.debug(f"SQL语句:\n{sql_query.sql}")
         return await self.db.execute_query(
             db_config_id=sql_query.db_config_id,
-            sql=sql_query.sql
+            sql=sql_query.sql,
+            session_temp_db_path=self.temp_db_path
         )
     
     async def _execute_mcp_call(self, mcp_call: MCPCall) -> MCPResult:

@@ -9,14 +9,15 @@ import {
   Space,
   Popconfirm,
   Tag,
-  message,
+  Checkbox,
+  Upload,
 } from 'antd';
 import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
   CheckCircleOutlined,
-  CloseCircleOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import { databaseService } from '../services';
 import { showError, showSuccess } from '../utils/notification';
@@ -28,6 +29,8 @@ const DatabaseConfigTab = () => {
   const [editingDatabase, setEditingDatabase] = useState(null);
   const [testingId, setTestingId] = useState(null);
   const [form] = Form.useForm();
+  const [useSchemaFile, setUseSchemaFile] = useState(false);
+  const [schemaFileContent, setSchemaFileContent] = useState('');
 
   useEffect(() => {
     loadDatabases();
@@ -48,6 +51,8 @@ const DatabaseConfigTab = () => {
   const handleCreate = () => {
     setEditingDatabase(null);
     form.resetFields();
+    setUseSchemaFile(false);
+    setSchemaFileContent('');
     setModalVisible(true);
   };
 
@@ -60,6 +65,8 @@ const DatabaseConfigTab = () => {
       username: record.username,
       // Don't populate password for security
     });
+    setUseSchemaFile(record.use_schema_file || false);
+    setSchemaFileContent(record.schema_description || '');
     setModalVisible(true);
   };
 
@@ -89,22 +96,45 @@ const DatabaseConfigTab = () => {
     }
   };
 
+  const handleFileUpload = (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target.result;
+      setSchemaFileContent(content);
+      showSuccess('文件读取成功');
+    };
+    reader.onerror = () => {
+      showError('文件读取失败', '无法读取文件内容');
+    };
+    reader.readAsText(file);
+    return false; // 阻止自动上传
+  };
+
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
       
+      // 添加schema文件相关字段
+      const submitData = {
+        ...values,
+        use_schema_file: useSchemaFile,
+        schema_description: useSchemaFile ? schemaFileContent : null,
+      };
+      
       if (editingDatabase) {
         // Update existing database
-        await databaseService.updateDatabase(editingDatabase.id, values);
+        await databaseService.updateDatabase(editingDatabase.id, submitData);
         showSuccess('更新成功');
       } else {
         // Create new database
-        await databaseService.createDatabase(values);
+        await databaseService.createDatabase(submitData);
         showSuccess('创建成功');
       }
       
       setModalVisible(false);
       form.resetFields();
+      setUseSchemaFile(false);
+      setSchemaFileContent('');
       loadDatabases();
     } catch (error) {
       if (error.errorFields) {
@@ -123,11 +153,14 @@ const DatabaseConfigTab = () => {
       title: '名称',
       dataIndex: 'name',
       key: 'name',
+      width: 150,
+      ellipsis: true,
     },
     {
       title: '类型',
       dataIndex: 'type',
       key: 'type',
+      width: 100,
       render: (type) => {
         const colorMap = {
           sqlite: 'blue',
@@ -141,16 +174,32 @@ const DatabaseConfigTab = () => {
       title: 'URL',
       dataIndex: 'url',
       key: 'url',
+      width: 250,
       ellipsis: true,
     },
     {
       title: '用户名',
       dataIndex: 'username',
       key: 'username',
+      width: 120,
+      ellipsis: true,
+    },
+    {
+      title: 'Schema',
+      dataIndex: 'use_schema_file',
+      key: 'use_schema_file',
+      width: 120,
+      render: (useSchemaFile) => (
+        <Tag color={useSchemaFile ? 'green' : 'default'}>
+          {useSchemaFile ? '自定义描述' : '自动提取'}
+        </Tag>
+      ),
     },
     {
       title: '操作',
       key: 'actions',
+      width: 280,
+      fixed: 'right',
       render: (_, record) => (
         <Space>
           <Button
@@ -201,6 +250,7 @@ const DatabaseConfigTab = () => {
         rowKey="id"
         loading={loading}
         pagination={{ pageSize: 10 }}
+        scroll={{ x: 1200 }}
       />
 
       <Modal
@@ -262,6 +312,45 @@ const DatabaseConfigTab = () => {
             extra={editingDatabase ? '留空表示不修改密码' : ''}
           >
             <Input.Password placeholder="数据库密码" />
+          </Form.Item>
+
+          <Form.Item label="Schema描述文件">
+            <Checkbox
+              checked={useSchemaFile}
+              onChange={(e) => {
+                setUseSchemaFile(e.target.checked);
+                if (!e.target.checked) {
+                  setSchemaFileContent('');
+                }
+              }}
+            >
+              使用自定义Schema描述文件
+            </Checkbox>
+            {useSchemaFile && (
+              <div style={{ marginTop: 8 }}>
+                <Upload
+                  accept=".md,.txt"
+                  beforeUpload={handleFileUpload}
+                  maxCount={1}
+                  showUploadList={false}
+                >
+                  <Button icon={<UploadOutlined />}>选择文件</Button>
+                </Upload>
+                {schemaFileContent && (
+                  <div style={{ marginTop: 8 }}>
+                    <Input.TextArea
+                      value={schemaFileContent}
+                      onChange={(e) => setSchemaFileContent(e.target.value)}
+                      rows={6}
+                      placeholder="Schema描述内容"
+                    />
+                    <div style={{ marginTop: 4, fontSize: 12, color: '#666' }}>
+                      已加载 {schemaFileContent.length} 个字符
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </Form.Item>
         </Form>
       </Modal>

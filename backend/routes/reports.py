@@ -33,6 +33,7 @@ class SaveReportRequest(BaseModel):
     description: Optional[str] = Field(None, description="报表描述")
     query_plan: dict = Field(..., description="查询计划（JSON）")
     chart_config: Optional[dict] = Field(None, description="图表配置（JSON），text类型时可为None")
+    summary: Optional[str] = Field(None, description="第一次生成的summary")
     original_query: Optional[str] = Field(None, description="原始查询")
     data_source_ids: List[str] = Field(..., description="数据源ID列表")
 
@@ -72,6 +73,7 @@ class SavedReportResponse(BaseModel):
     description: Optional[str]
     query_plan: dict
     chart_config: Optional[dict]  # text 类型时可以为 None
+    summary: Optional[str]
     original_query: Optional[str]
     data_source_ids: List[str]
     created_at: str
@@ -168,6 +170,7 @@ async def save_report(request: SaveReportRequest):
             description=request.description,
             query_plan=json.dumps(request.query_plan, ensure_ascii=False),
             chart_config=json.dumps(request.chart_config, ensure_ascii=False),
+            summary=request.summary,
             original_query=request.original_query,
             data_source_ids=json.dumps(request.data_source_ids, ensure_ascii=False)
         )
@@ -183,6 +186,7 @@ async def save_report(request: SaveReportRequest):
                 description=saved_report.description,
                 query_plan=json.loads(saved_report.query_plan),
                 chart_config=json.loads(saved_report.chart_config),
+                summary=saved_report.summary,
                 original_query=saved_report.original_query,
                 data_source_ids=json.loads(saved_report.data_source_ids),
                 created_at=to_iso_string(saved_report.created_at),
@@ -220,6 +224,7 @@ async def get_saved_reports():
                     description=report.description,
                     query_plan=json.loads(report.query_plan),
                     chart_config=json.loads(report.chart_config),
+                    summary=report.summary,
                     original_query=report.original_query,
                     data_source_ids=json.loads(report.data_source_ids),
                     created_at=to_iso_string(report.created_at),
@@ -264,6 +269,7 @@ async def get_saved_report(report_id: str):
                 description=report.description,
                 query_plan=json.loads(report.query_plan),
                 chart_config=json.loads(report.chart_config),
+                summary=report.summary,
                 original_query=report.original_query,
                 data_source_ids=json.loads(report.data_source_ids),
                 created_at=to_iso_string(report.created_at),
@@ -317,6 +323,7 @@ async def update_saved_report(report_id: str, request: UpdateReportRequest):
                 description=report.description,
                 query_plan=json.loads(report.query_plan),
                 chart_config=json.loads(report.chart_config),
+                summary=report.summary,
                 original_query=report.original_query,
                 data_source_ids=json.loads(report.data_source_ids),
                 created_at=to_iso_string(report.created_at),

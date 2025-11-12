@@ -349,6 +349,7 @@ const ReportDisplay = ({ reportData, onSave }) => {
         description: reportDescription.trim(),
         query_plan: reportData.query_plan || {},
         chart_config: reportData.chart_config || null,
+        summary: reportData.summary || '',
         original_query: reportData.original_query || '',
         data_source_ids: reportData.data_source_ids || [],
       });

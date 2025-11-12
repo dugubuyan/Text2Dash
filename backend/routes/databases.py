@@ -26,6 +26,8 @@ class CreateDatabaseRequest(BaseModel):
     url: str = Field(..., description="数据库连接URL")
     username: Optional[str] = Field(None, description="用户名")
     password: Optional[str] = Field(None, description="密码")
+    use_schema_file: bool = Field(False, description="是否使用schema描述文件")
+    schema_description: Optional[str] = Field(None, description="schema描述文件内容")
 
 
 class UpdateDatabaseRequest(BaseModel):
@@ -35,6 +37,8 @@ class UpdateDatabaseRequest(BaseModel):
     url: Optional[str] = Field(None, description="数据库连接URL")
     username: Optional[str] = Field(None, description="用户名")
     password: Optional[str] = Field(None, description="密码")
+    use_schema_file: Optional[bool] = Field(None, description="是否使用schema描述文件")
+    schema_description: Optional[str] = Field(None, description="schema描述文件内容")
 
 
 class DatabaseResponse(BaseModel):
@@ -44,6 +48,8 @@ class DatabaseResponse(BaseModel):
     type: str
     url: str
     username: Optional[str]
+    use_schema_file: bool
+    schema_description: Optional[str]
     created_at: str
     updated_at: str
 
@@ -81,7 +87,9 @@ async def create_database_config(request: CreateDatabaseRequest):
             type=request.type,
             url=request.url,
             username=request.username,
-            encrypted_password=encrypted_password
+            encrypted_password=encrypted_password,
+            use_schema_file=request.use_schema_file,
+            schema_description=request.schema_description
         )
         
         with db.get_session() as session:
@@ -95,6 +103,8 @@ async def create_database_config(request: CreateDatabaseRequest):
                 type=db_config.type,
                 url=db_config.url,
                 username=db_config.username,
+                use_schema_file=db_config.use_schema_file,
+                schema_description=db_config.schema_description,
                 created_at=to_iso_string(db_config.created_at),
                 updated_at=to_iso_string(db_config.updated_at)
             )
@@ -130,6 +140,8 @@ async def get_database_configs():
                     type=config.type,
                     url=config.url,
                     username=config.username,
+                    use_schema_file=config.use_schema_file,
+                    schema_description=config.schema_description,
                     created_at=to_iso_string(config.created_at),
                     updated_at=to_iso_string(config.updated_at)
                 )
@@ -172,6 +184,8 @@ async def get_database_config(config_id: str):
                 type=config.type,
                 url=config.url,
                 username=config.username,
+                use_schema_file=config.use_schema_file,
+                schema_description=config.schema_description,
                 created_at=to_iso_string(config.created_at),
                 updated_at=to_iso_string(config.updated_at)
             )
@@ -220,6 +234,10 @@ async def update_database_config(config_id: str, request: UpdateDatabaseRequest)
                 config.username = request.username
             if request.password is not None:
                 config.encrypted_password = encryption_service.encrypt(request.password)
+            if request.use_schema_file is not None:
+                config.use_schema_file = request.use_schema_file
+            if request.schema_description is not None:
+                config.schema_description = request.schema_description
             
             session.commit()
             session.refresh(config)
@@ -230,6 +248,8 @@ async def update_database_config(config_id: str, request: UpdateDatabaseRequest)
                 type=config.type,
                 url=config.url,
                 username=config.username,
+                use_schema_file=config.use_schema_file,
+                schema_description=config.schema_description,
                 created_at=to_iso_string(config.created_at),
                 updated_at=to_iso_string(config.updated_at)
             )

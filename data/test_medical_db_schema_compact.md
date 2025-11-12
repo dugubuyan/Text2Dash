@@ -16,20 +16,28 @@
 - student_majors (supports dual majors via is_primary flag)
 
 ### Courses
-**courses** (PK: course_id, credits, level)
-- course_prerequisites (self-referencing)
-- **course_sections** (semester, year, capacity, enrolled_count)
+**courses** (PK: course_id, course_name, course_code, credits, level)
+- **course_prerequisites** (FK: course_id → courses, FK: prerequisite_course_id → courses)
+  - Self-referencing: to find prerequisites, JOIN courses twice
+- **course_sections** (PK: section_id, FK: course_id, semester, year, capacity, enrolled_count)
   - course_schedules (day, time, room_id)
-  - section_instructors → faculty (role: Primary/Assistant/Guest)
+  - **section_instructors** (FK: section_id → course_sections, FK: faculty_id → faculty, role: Primary/Assistant/Guest)
 - course_materials, objectives, topics, categories, evaluations
 
 ### Faculty
-**faculty** (PK: faculty_id, title, department_id)
+**faculty** (PK: faculty_id, name, title, department_id)
 - Extensions: qualifications, research_interests, publications, office_hours, awards, teaching_loads
 - Roles: section_instructors, academic_advisors, committee_memberships, thesis_committee_members
 
+### Academic Advisors (导师系统)
+**academic_advisors** (PK: advisor_id, FK: faculty_id → faculty)
+- Links faculty to their advisor role
+- **student_advisor_assignments** (FK: advisor_id → academic_advisors, FK: student_id → students)
+- To query advisor-student relationships: academic_advisors JOIN faculty ON faculty_id, then LEFT JOIN student_advisor_assignments ON advisor_id
+
 ### Enrollment
-**student_enrollments** (student_id + section_id, status, grade, grade_points)
+**student_enrollments** (PK: enrollment_id, FK: student_id → students, FK: section_id → course_sections, status, grade, grade_points)
+- Core table linking students to course sections
 - enrollment_waitlists, enrollment_permissions
 - credit_transfers, course_drops, course_withdrawals
 - grade_changes, incomplete_grades
@@ -56,8 +64,8 @@ All link to: section_id + student_id
 - clinical_rotation_attendance
 
 ### Research
-**research_projects** (PI, department_id, funding, status) → **student_research_participation** (role, hours)
-**thesis_submissions** (advisor_id, defense_date, status) → **thesis_committee_members** (role: Chair/Member/External)
+**research_projects** (PI, department_id, funding, status) → **student_research_participation** (FK: student_id, FK: project_id, role, hours)
+**thesis_submissions** (PK: thesis_id, FK: student_id, FK: advisor_id → faculty, defense_date, status) → **thesis_committee_members** (FK: thesis_id, FK: faculty_id → faculty, role: Chair/Member/External)
 
 ### Graduation
 **graduation_requirements** (program_id, credits_required)

@@ -604,12 +604,30 @@ def main():
             assignments)
         f.write(sql + '\n')
         
+        # Generate academic advisors (20 records)
+        advisors = []
+        specializations = ['临床医学', '基础医学', '预防医学', '药学', '护理学', '医学影像', '医学检验']
+        
+        for i in range(20):
+            advisor_id = f"ADV{i+1:03d}"
+            faculty_id = f"F{i+1:03d}"  # Use first 20 faculty as advisors
+            dept_id = f"DEPT{random.randint(1, DEPARTMENTS_COUNT):03d}"
+            specialization = random.choice(specializations)
+            max_students = random.choice([15, 20, 25, 30])
+            
+            advisors.append((advisor_id, faculty_id, dept_id, specialization, max_students))
+        
+        sql = generate_sql_inserts('academic_advisors',
+            ['advisor_id', 'faculty_id', 'department_id', 'specialization', 'max_students'],
+            advisors)
+        f.write(sql + '\n')
+        
         # Generate student advisor assignments (50 records - one per student)
         advisor_assignments = []
         
         for i in range(STUDENTS_COUNT):
             student_id = f"S{2020000 + i}"
-            advisor_id = f"F{random.randint(1, FACULTY_COUNT):03d}"
+            advisor_id = f"ADV{random.randint(1, 20):03d}"  # Use advisor_id instead of faculty_id
             assignment_date = random_date(2020, 2023)
             end_date = random_date(2024, 2025) if random.random() > 0.8 else None
             
@@ -620,6 +638,59 @@ def main():
             advisor_assignments)
         f.write(sql + '\n')
         
+        # Generate course schedules (40 records)
+        schedules = []
+        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        
+        for i in range(40):
+            section_id = f"SEC{random.randint(1, 35):04d}"
+            day = random.choice(days)
+            start_hour = random.randint(8, 16)
+            start_time = f"{start_hour:02d}:00:00"
+            end_time = f"{start_hour + random.choice([1, 2, 3]):02d}:00:00"
+            room_id = f"R{random.randint(1, 30):03d}"
+            
+            schedules.append((section_id, day, start_time, end_time, room_id))
+        
+        sql = generate_sql_inserts('course_schedules',
+            ['section_id', 'day_of_week', 'start_time', 'end_time', 'room_id'],
+            schedules)
+        f.write(sql + '\n')
+        
+        # Generate course materials (35 records)
+        materials = []
+        material_types = ['Textbook', 'Reference', 'Online', 'Lab Manual']
+        
+        for i in range(35):
+            course_id = f"C{random.randint(1, COURSES_COUNT):04d}"
+            mat_type = random.choice(material_types)
+            title = f"Medical {mat_type} {i+1}"
+            author = random_chinese_name()
+            isbn = f"978-{random.randint(1000000000, 9999999999)}"
+            is_required = 1 if random.random() > 0.3 else 0
+            
+            materials.append((course_id, mat_type, title, author, isbn, is_required))
+        
+        sql = generate_sql_inserts('course_materials',
+            ['course_id', 'material_type', 'title', 'author', 'isbn', 'is_required'],
+            materials)
+        f.write(sql + '\n')
+        
+        # Generate course prerequisites (25 records)
+        prerequisites = []
+        
+        for i in range(25):
+            course_id = f"C{random.randint(5, COURSES_COUNT):04d}"  # Advanced courses
+            prereq_id = f"C{random.randint(1, 20):04d}"  # Basic courses
+            is_mandatory = 1 if random.random() > 0.2 else 0
+            
+            prerequisites.append((course_id, prereq_id, is_mandatory))
+        
+        sql = generate_sql_inserts('course_prerequisites',
+            ['course_id', 'prerequisite_course_id', 'is_mandatory'],
+            prerequisites)
+        f.write(sql + '\n')
+        
         print(f"Test data SQL file generated: {output_file}")
         print(f"Generated data for:")
         print(f"  - {len(students)} students")
@@ -627,7 +698,11 @@ def main():
         print(f"  - {len(programs)} programs")
         print(f"  - {len(faculty)} faculty members")
         print(f"  - {len(courses)} courses")
+        print(f"  - {len(advisors)} academic advisors")
         print(f"  - {len(advisor_assignments)} advisor assignments")
+        print(f"  - {len(schedules)} course schedules")
+        print(f"  - {len(materials)} course materials")
+        print(f"  - {len(prerequisites)} course prerequisites")
         print(f"  - And many more related records...")
 
 if __name__ == '__main__':

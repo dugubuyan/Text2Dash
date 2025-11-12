@@ -14,6 +14,7 @@ from ..models.database_config import DatabaseConfig
 from .encryption_service import get_encryption_service
 from .dto import DataMetadata
 from ..utils.logger import get_logger
+from .database_adapters import DatabaseAdapterFactory
 
 logger = get_logger(__name__)
 
@@ -72,21 +73,18 @@ class DatabaseConnector:
                 logger.error(f"解密数据库密码失败: {e}")
                 raise ValueError("无法解密数据库密码")
         
-        # 根据数据库类型构建连接字符串
-        if db_config.type == "sqlite":
-            return db_config.url
-        elif db_config.type == "mysql":
-            if db_config.username and password:
-                return f"mysql+pymysql://{db_config.username}:{password}@{db_config.url}"
-            else:
-                return f"mysql+pymysql://{db_config.url}"
-        elif db_config.type == "postgresql":
-            if db_config.username and password:
-                return f"postgresql+psycopg2://{db_config.username}:{password}@{db_config.url}"
-            else:
-                return f"postgresql+psycopg2://{db_config.url}"
-        else:
-            raise ValueError(f"不支持的数据库类型: {db_config.type}")
+        # 使用适配器构建连接字符串
+        try:
+            adapter = DatabaseAdapterFactory.get_adapter(db_config.type)
+            config_dict = {
+                'url': db_config.url,
+                'username': db_config.username,
+                'password': password
+            }
+            return adapter.get_connection_string(config_dict)
+        except ValueError as e:
+            logger.error(f"获取数据库适配器失败: {e}")
+            raise
     
     def _get_or_create_connection(self, db_config_id: str) -> Engine:
         """
@@ -111,11 +109,11 @@ class DatabaseConnector:
             # 构建连接字符串
             connection_string = self._get_connection_string(db_config)
             
-            # 创建连接
-            connect_args = {}
-            if db_config.type == "sqlite":
-                connect_args["check_same_thread"] = False
+            # 获取适配器的连接参数
+            adapter = DatabaseAdapterFactory.get_adapter(db_config.type)
+            connect_args = adapter.get_connect_args()
             
+            # 创建连接
             engine = create_engine(
                 connection_string,
                 poolclass=QueuePool,
@@ -152,15 +150,17 @@ class DatabaseConnector:
     async def execute_query(
         self,
         db_config_id: str,
-        sql: str
+        sql: str,
+        session_temp_db_path: Optional[str] = None
     ) -> QueryResult:
         """
         执行SQL查询并返回结果
         支持执行多个SQL语句（用分号分隔），返回最后一个SELECT语句的结果
         
         Args:
-            db_config_id: 数据库配置ID
+            db_config_id: 数据库配置ID，特殊值 "__session__" 表示查询 session 临时表
             sql: SQL查询语句（可以包含多个语句，用分号分隔）
+            session_temp_db_path: session 临时数据库路径（当 db_config_id="__session__" 时需要）
             
         Returns:
             QueryResult对象，包含查询结果和列名
@@ -169,6 +169,36 @@ class DatabaseConnector:
             ValueError: 如果数据库配置不存在
             Exception: 如果SQL执行失败
         """
+        # 特殊处理：查询 session 临时表
+        if db_config_id == "__session__":
+            if not session_temp_db_path:
+                raise ValueError("查询 session 临时表时必须提供 session_temp_db_path")
+            
+            logger.debug(
+                f"准备执行 Session 临时表查询:\n"
+                f"  临时数据库: {session_temp_db_path}\n"
+                f"  SQL: {sql[:200]}{'...' if len(sql) > 200 else ''}"
+            )
+            
+            import sqlite3
+            conn = sqlite3.connect(session_temp_db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            try:
+                cursor.execute(sql)
+                rows = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                data = [dict(row) for row in rows]
+                
+                logger.info(
+                    f"Session 临时表查询成功: rows={len(data)}, columns={len(columns)}"
+                )
+                
+                return QueryResult(data=data, columns=columns)
+            finally:
+                conn.close()
+        
         # 获取数据库配置信息用于日志
         with self.config_db.get_session() as session:
             db_config = session.query(DatabaseConfig).filter_by(id=db_config_id).first()
@@ -318,11 +348,11 @@ class DatabaseConnector:
             # 构建连接字符串
             connection_string = self._get_connection_string(db_config)
             
-            # 创建临时连接
-            connect_args = {}
-            if db_config.type == "sqlite":
-                connect_args["check_same_thread"] = False
+            # 获取适配器的连接参数
+            adapter = DatabaseAdapterFactory.get_adapter(db_config.type)
+            connect_args = adapter.get_connect_args()
             
+            # 创建临时连接
             engine = create_engine(
                 connection_string,
                 connect_args=connect_args

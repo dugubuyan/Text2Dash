@@ -37,7 +37,13 @@ backend/
 │   ├── session_manager.py     # 会话管理
 │   ├── export_service.py      # 导出服务
 │   ├── cache_service.py       # 缓存服务
-│   └── encryption_service.py  # 加密服务
+│   ├── encryption_service.py  # 加密服务
+│   └── database_adapters/     # 数据库适配器
+│       ├── base.py            # 适配器基类
+│       ├── factory.py         # 适配器工厂
+│       ├── mysql.py           # MySQL 适配器
+│       ├── postgresql.py      # PostgreSQL 适配器
+│       └── sqlite.py          # SQLite 适配器
 │
 ├── routes/                    # API 路由
 │   ├── databases.py           # 数据库配置 API
@@ -133,8 +139,16 @@ POST /api/reports/generate
 
 ### 2. 多数据源支持
 
-- **数据库**: MySQL, PostgreSQL, SQLite
+- **数据库**: MySQL, PostgreSQL, SQLite（使用适配器模式，易于扩展）
 - **MCP Server**: 通过 Model Context Protocol 连接外部数据源
+
+#### 数据库适配器架构
+
+系统使用适配器模式支持多种数据库类型。当前支持 MySQL、PostgreSQL、SQLite，添加新数据库只需3步：创建适配器类、注册适配器、安装驱动。
+
+系统会自动在 LLM prompt 中标注数据库类型（如 `**类型: MYSQL**`），LLM 会自动生成符合该数据库 SQL 方言的查询语句。
+
+详细文档：[database_adapters/README.md](services/database_adapters/README.md)
 
 ### 3. 敏感信息过滤
 
@@ -237,6 +251,18 @@ pytest backend/tests/test_report_service.py -v
 
 ## 开发指南
 
+### 添加新的数据库支持
+
+系统使用适配器模式支持多种数据库。添加新数据库只需3步：
+
+1. 创建适配器类（实现 `DatabaseAdapter` 接口）
+2. 在工厂中注册适配器
+3. 安装对应的数据库驱动
+
+系统会自动在 LLM prompt 中标注数据库类型，LLM 会自动生成对应的 SQL 方言。
+
+详细文档和示例：[database_adapters/README.md](services/database_adapters/README.md)
+
 ### 添加新的 API 端点
 
 1. 在 `routes/` 目录创建或编辑路由文件
@@ -290,7 +316,7 @@ python backend/migrations/test_migration.py
 
 ## 相关文档
 
-- [数据库配置指南](DATABASE_CONFIG_GUIDE.md)
+- [数据库适配器文档](services/database_adapters/README.md) - 如何添加新数据库支持
 - [服务层文档](services/README.md)
 - [测试文档](tests/README.md)
 - [迁移文档](migrations/README.md)

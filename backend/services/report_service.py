@@ -138,90 +138,10 @@ class ReportService:
             
             logger.info(
                 f"查询计划生成完成: no_match={query_plan.no_data_source_match}, "
-                f"use_temp_table={query_plan.use_temp_table}, "
-                f"temp_table={query_plan.temp_table_name}, "
                 f"sql_queries={len(query_plan.sql_queries)}, "
                 f"mcp_calls={len(query_plan.mcp_calls)}, "
                 f"needs_combination={query_plan.needs_combination}"
             )
-            
-            # 检查是否使用临时表
-            if query_plan.use_temp_table and query_plan.temp_table_name:
-                # 直接从临时表查询数据
-                logger.info(f"使用临时表: {query_plan.temp_table_name}")
-                
-                temp_data = self.data_source.query_session_temp_table(
-                    table_name=query_plan.temp_table_name
-                )
-                
-                if not temp_data:
-                    raise Exception(f"临时表 {query_plan.temp_table_name} 不存在或为空")
-                
-                # 构建 CombinedData
-                columns = list(temp_data[0].keys()) if temp_data else []
-                combined_data = CombinedData(data=temp_data, columns=columns)
-                
-                # 跳过数据查询步骤，直接进入过滤和分析
-                logger.info(f"从临时表获取数据: rows={len(temp_data)}, columns={len(columns)}")
-                
-                # 应用敏感信息过滤
-                filtered_data = await self._apply_filters_to_combined_data(
-                    combined_data=combined_data,
-                    data_source_ids=data_source_ids
-                )
-                
-                # 获取数据元信息
-                metadata = self.data_source.get_combined_metadata(
-                    CombinedData(data=filtered_data, columns=combined_data.columns)
-                )
-                
-                # 调用LLM生成图表配置和总结
-                chart_suggestion = await self.llm.analyze_data_and_suggest_chart(
-                    query=query,
-                    metadata=metadata,
-                    model=model
-                )
-                
-                final_summary = self._replace_placeholders_in_summary(
-                    chart_suggestion.summary,
-                    filtered_data
-                )
-                
-                # 生成interaction_id
-                interaction_id = str(uuid.uuid4())
-                
-                # 异步保存到会话历史
-                asyncio.create_task(
-                    self._save_session_async(
-                        session_id=session_id,
-                        interaction_id=interaction_id,
-                        query=query,
-                        sql_display=f"-- 使用临时表: {query_plan.temp_table_name}",
-                        query_plan=query_plan.model_dump() if hasattr(query_plan, 'model_dump') else query_plan.dict(),
-                        chart_config=chart_suggestion.chart_config,
-                        summary=final_summary,
-                        data_source_ids=data_source_ids,
-                        data_snapshot=filtered_data[:10]
-                    )
-                )
-                
-                # 返回结果
-                result = ReportResult(
-                    session_id=session_id,
-                    interaction_id=interaction_id,
-                    sql_query=f"-- 使用临时表: {query_plan.temp_table_name}",
-                    query_plan=query_plan,
-                    chart_config=chart_suggestion.chart_config,
-                    summary=final_summary,
-                    data=filtered_data,
-                    metadata=metadata,
-                    original_query=query,
-                    data_source_ids=data_source_ids,
-                    model=model
-                )
-                
-                logger.info(f"临时表查询完成: interaction_id={interaction_id}")
-                return result
             
             # 检查是否无法匹配数据源
             if query_plan.no_data_source_match:
@@ -336,16 +256,22 @@ class ReportService:
             # 生成interaction_id（用于返回）
             interaction_id = str(uuid.uuid4())
             
-            # 保存完整数据到临时表
-            interaction_num = await self._get_next_interaction_num(session_id)
-            temp_table_name = self.data_source.create_session_temp_table(
-                session_id=session_id,
-                interaction_num=interaction_num,
-                data=filtered_data,
-                columns=combined_data.columns
-            )
+            # 判断是否需要创建临时表
+            should_create_temp_table = self._should_create_temp_table(query_plan)
             
-            logger.info(f"数据已保存到临时表: {temp_table_name}, rows={len(filtered_data)}")
+            if should_create_temp_table:
+                # 保存完整数据到临时表
+                interaction_num = await self._get_next_interaction_num(session_id)
+                temp_table_name = self.data_source.create_session_temp_table(
+                    session_id=session_id,
+                    interaction_num=interaction_num,
+                    data=filtered_data,
+                    columns=combined_data.columns
+                )
+                logger.info(f"数据已保存到临时表: {temp_table_name}, rows={len(filtered_data)}")
+            else:
+                temp_table_name = None
+                logger.info(f"跳过临时表创建（简单子集查询）: rows={len(filtered_data)}")
             
             # 创建后台任务异步保存会话
             asyncio.create_task(
@@ -431,13 +357,23 @@ class ReportService:
                 if db_config:
                     # 获取数据库schema
                     try:
-                        schema_info = await self.data_source.db.get_schema_info(source_id)
-                        db_schemas[source_id] = {
-                            "name": db_config.name,
-                            "type": db_config.type,
-                            "tables": schema_info.tables
-                        }
-                        logger.debug(f"获取数据库schema: {source_id}")
+                        # 如果配置了使用schema描述文件，则使用文件内容
+                        if db_config.use_schema_file and db_config.schema_description:
+                            db_schemas[source_id] = {
+                                "name": db_config.name,
+                                "type": db_config.type,
+                                "schema_description": db_config.schema_description
+                            }
+                            logger.debug(f"使用schema描述文件: {source_id}")
+                        else:
+                            # 否则从数据库获取schema信息
+                            schema_info = await self.data_source.db.get_schema_info(source_id)
+                            db_schemas[source_id] = {
+                                "name": db_config.name,
+                                "type": db_config.type,
+                                "tables": schema_info.tables
+                            }
+                            logger.debug(f"获取数据库schema: {source_id}")
                     except Exception as e:
                         logger.warning(f"获取数据库schema失败: {source_id}, {e}")
                     continue
@@ -513,6 +449,41 @@ class ReportService:
             logger.error(f"获取 session 临时表信息失败: {e}", exc_info=True)
         
         return temp_tables_info
+    
+    def _should_create_temp_table(self, query_plan: QueryPlan) -> bool:
+        """
+        判断是否需要创建临时表
+        
+        规则：
+        1. 查询了原始数据源（非临时表）→ 需要创建
+        2. 有 MCP 调用 → 需要创建
+        3. 需要数据组合 → 需要创建
+        4. 只查询临时表的简单子集 → 不需要创建
+        
+        Args:
+            query_plan: 查询计划
+            
+        Returns:
+            是否需要创建临时表
+        """
+        # 规则1：查询了原始数据源
+        if any(q.db_config_id != "__session__" for q in query_plan.sql_queries):
+            logger.debug("需要创建临时表：查询了原始数据源")
+            return True
+        
+        # 规则2：有 MCP 调用
+        if len(query_plan.mcp_calls) > 0:
+            logger.debug("需要创建临时表：有 MCP 调用")
+            return True
+        
+        # 规则3：需要数据组合
+        if query_plan.needs_combination:
+            logger.debug("需要创建临时表：需要数据组合")
+            return True
+        
+        # 规则4：只查询临时表的简单子集，不需要创建
+        logger.debug("不需要创建临时表：简单临时表查询")
+        return False
     
     async def _get_next_interaction_num(self, session_id: str) -> int:
         """
@@ -846,8 +817,6 @@ class ReportService:
             query_plan = QueryPlan(
                 no_data_source_match=query_plan_dict.get("no_data_source_match", False),
                 user_message=query_plan_dict.get("user_message"),
-                use_temp_table=query_plan_dict.get("use_temp_table", False),
-                temp_table_name=query_plan_dict.get("temp_table_name"),
                 sql_queries=[SQLQuery(**q) for q in query_plan_dict.get("sql_queries", [])],
                 mcp_calls=[MCPCall(**c) for c in query_plan_dict.get("mcp_calls", [])],
                 needs_combination=query_plan_dict.get("needs_combination", False),
@@ -921,11 +890,20 @@ class ReportService:
                 
                 logger.info(f"LLM分析完成: type={chart_suggestion.chart_type}")
             else:
-                # 不需要分析：直接使用保存的配置
+                # 不需要分析：直接使用保存的配置和summary
                 final_chart_config = chart_config
-                final_summary = saved_report.description or "常用报表执行结果"
                 
-                logger.info("使用保存的图表配置（无LLM调用）")
+                # 使用保存的summary并替换占位符
+                if saved_report.summary:
+                    final_summary = self._replace_placeholders_in_summary(
+                        saved_report.summary,
+                        filtered_data
+                    )
+                else:
+                    # 如果没有保存summary，使用description作为后备
+                    final_summary = saved_report.description or "常用报表执行结果"
+                
+                logger.info("使用保存的图表配置和summary（无LLM调用）")
             
             # 步骤8: 清理临时表
             if query_plan.needs_combination:
