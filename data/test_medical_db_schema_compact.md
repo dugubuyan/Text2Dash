@@ -6,12 +6,16 @@
 ## Core Entities & Relationships
 
 ### Students Hub
-**students** (PK: student_id)
+**students** (PK: student_id, name, gender, date_of_birth, email, phone, admission_date, graduation_date, status)
 - Extensions: addresses, emergency_contacts, family_info, health_records, photos, id_cards, previous_education, scholarships
 - Links to: majors, advisors, enrollments, clinical_assignments, research, payments, graduation
 
 ### Academic Structure
-**departments** → **programs** (degree_type: Bachelor/Master/PhD) → **majors** → **specializations**
+**departments** (PK: department_id, department_name, head_faculty_id, building)
+- Note: Use department_name not name
+**programs** (PK: program_id, program_name, degree_type: Bachelor/Master/PhD, department_id)
+**majors** (PK: major_id, major_name, program_id, department_id)
+**specializations** (PK: specialization_id, specialization_name, major_id)
 - program_requirements, program_milestones
 - student_majors (supports dual majors via is_primary flag)
 
@@ -60,11 +64,11 @@ All link to: section_id + student_id
 - attendance_warnings
 
 ### Clinical Training (Medical-Specific)
-**clinical_rotations** (duration_weeks, required_hours) → **student_clinical_assignments** (hospital, supervisor) → **clinical_evaluations** (clinical_skills_score, professionalism_score, communication_score)
+**clinical_rotations** (PK: rotation_id, rotation_name, department, duration_weeks, required_hours) → **student_clinical_assignments** (FK: student_id, FK: rotation_id, hospital, supervisor) → **clinical_evaluations** (clinical_skills_score, professionalism_score, communication_score)
 - clinical_rotation_attendance
 
 ### Research
-**research_projects** (PI, department_id, funding, status) → **student_research_participation** (FK: student_id, FK: project_id, role, hours)
+**research_projects** (PK: project_id, project_title, principal_investigator, department_id, funding_amount, status) → **student_research_participation** (FK: student_id, FK: project_id, role, hours)
 **thesis_submissions** (PK: thesis_id, FK: student_id, FK: advisor_id → faculty, defense_date, status) → **thesis_committee_members** (FK: thesis_id, FK: faculty_id → faculty, role: Chair/Member/External)
 
 ### Graduation
