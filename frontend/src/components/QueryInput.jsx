@@ -70,8 +70,18 @@ const QueryInput = ({ onSubmit, loading = false, sessionId, compact = false }) =
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      handleSubmit();
+    // 在紧凑模式（对话框）中，单独按回车发送；Shift+Enter换行
+    // 在完整模式（首页）中，保持Ctrl/Cmd+Enter发送
+    if (e.key === 'Enter') {
+      if (compact && !e.shiftKey) {
+        // 紧凑模式：回车发送，Shift+Enter换行
+        e.preventDefault();
+        handleSubmit();
+      } else if (!compact && (e.ctrlKey || e.metaKey)) {
+        // 完整模式：Ctrl/Cmd+Enter发送
+        e.preventDefault();
+        handleSubmit();
+      }
     }
   };
 
@@ -112,7 +122,7 @@ const QueryInput = ({ onSubmit, loading = false, sessionId, compact = false }) =
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="输入查询内容..."
+          placeholder="输入查询内容（回车发送，Shift+回车换行）..."
           rows={3}
           disabled={loading}
           style={{ resize: 'none' }}

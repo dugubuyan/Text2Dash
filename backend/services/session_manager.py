@@ -483,6 +483,79 @@ class SessionManager:
             logger.error(f"获取会话历史失败: {e}", exc_info=True)
             raise Exception(f"获取会话历史失败: {str(e)}")
     
+    async def get_last_interaction(
+        self,
+        session_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        获取最后一次交互
+        
+        Args:
+            session_id: 会话ID
+        
+        Returns:
+            交互信息字典，如果没有交互则返回None
+        """
+        try:
+            with self.db.get_session() as db_session:
+                interaction = db_session.query(SessionInteraction).filter(
+                    SessionInteraction.session_id == session_id
+                ).order_by(SessionInteraction.created_at.desc()).first()
+                
+                if not interaction:
+                    return None
+                
+                return {
+                    "id": interaction.id,
+                    "user_query": interaction.user_query,
+                    "summary": interaction.summary,
+                    "temp_table_name": interaction.temp_table_name,
+                    "query_plan": json.loads(interaction.query_plan) if interaction.query_plan else None,
+                    "chart_config": json.loads(interaction.chart_config) if interaction.chart_config else None,
+                    "data_source_ids": json.loads(interaction.data_source_ids) if interaction.data_source_ids else None
+                }
+                
+        except Exception as e:
+            logger.error(f"获取最后交互失败: {e}", exc_info=True)
+            return None
+    
+    async def get_all_interactions(
+        self,
+        session_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        获取会话的所有交互历史
+        
+        Args:
+            session_id: 会话ID
+        
+        Returns:
+            交互信息列表，按时间升序排列
+        """
+        try:
+            with self.db.get_session() as db_session:
+                interactions = db_session.query(SessionInteraction).filter(
+                    SessionInteraction.session_id == session_id
+                ).order_by(SessionInteraction.created_at.asc()).all()
+                
+                result = []
+                for interaction in interactions:
+                    result.append({
+                        "id": interaction.id,
+                        "user_query": interaction.user_query,
+                        "summary": interaction.summary,
+                        "temp_table_name": interaction.temp_table_name,
+                        "chart_config": json.loads(interaction.chart_config) if interaction.chart_config else None,
+                        "data_source_ids": json.loads(interaction.data_source_ids) if interaction.data_source_ids else None,
+                        "created_at": interaction.created_at.isoformat() if interaction.created_at else None
+                    })
+                
+                return result
+                
+        except Exception as e:
+            logger.error(f"获取所有交互失败: {e}", exc_info=True)
+            return []
+    
     async def delete_session(self, session_id: str) -> bool:
         """
         删除会话及其所有相关数据

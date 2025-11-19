@@ -23,8 +23,11 @@ export const sensitiveRuleService = {
   },
 
   // Parse natural language to structured rule
-  parseRule: (naturalLanguage) => {
-    return api.post('/sensitive-rules/parse', { natural_language: naturalLanguage });
+  parseRule: (naturalLanguage, dbConfigId = null) => {
+    return api.post('/sensitive-rules/parse', { 
+      natural_language: naturalLanguage,
+      db_config_id: dbConfigId
+    });
   },
 };
 

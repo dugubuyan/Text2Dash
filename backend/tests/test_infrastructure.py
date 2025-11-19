@@ -2,7 +2,14 @@
 测试后端核心基础设施
 验证数据库、加密服务和日志功能
 """
+import sys
 import uuid
+from pathlib import Path
+
+# 添加项目根目录到Python路径
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
 from backend.database import get_database
 from backend.services.encryption_service import get_encryption_service
 from backend.utils.logger import get_logger

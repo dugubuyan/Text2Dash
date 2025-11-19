@@ -35,7 +35,7 @@ class QueryPlan(BaseModel):
     sql_queries: List[SQLQuery] = Field(default_factory=list)
     mcp_calls: List[MCPCall] = Field(default_factory=list)
     needs_combination: bool = False
-    combination_strategy: Optional[str] = None
+    combination_strategy: Optional[str] = None  # 已废弃：不再使用，保留仅为向后兼容
 
 
 class ChartSuggestion(BaseModel):
@@ -61,3 +61,14 @@ class ConversationMessage(BaseModel):
     role: str  # 'user' or 'assistant'
     content: str
     timestamp: Optional[datetime] = None
+
+
+class ExecutionPlan(BaseModel):
+    """执行计划（智能路由输出）"""
+    action: str  # 执行动作类型
+    direct_response: Optional[str] = None  # 直接回复内容
+    needs_chart_generation: bool = False
+    reuse_previous_data: bool = False
+    query_temp_table: bool = False
+    suggestions: Optional[List[str]] = None  # 给用户的建议
+    refined_query: Optional[str] = None  # 精炼后的查询意图（用于数据查询和图表生成）

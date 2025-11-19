@@ -109,3 +109,5 @@ data/temp_data.db
 
 # mem0 vector store
 data/mem0_vector_store/
+
+website

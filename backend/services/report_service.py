@@ -12,6 +12,7 @@ from .data_source_manager import DataSourceManager, CombinedData
 from .filter_service import FilterService
 from .session_manager import SessionManager
 from .dto import QueryPlan, DataMetadata, ChartSuggestion
+from .report_utils import build_sql_display, replace_placeholders_in_summary
 from ..database import Database
 from ..models.saved_report import SavedReport
 from ..utils.logger import get_logger
@@ -75,6 +76,24 @@ class ReportService:
         self.session = session_manager
         self.db = database
         
+        # 初始化执行器
+        from .executors import (
+            ConversationExecutor,
+            FullQueryExecutor,
+            TempTableQueryExecutor,
+            ReuseDataExecutor,
+            DataOnlyExecutor
+        )
+        
+        self.executors = {
+            'direct_conversation': ConversationExecutor(self),
+            'clarify_and_guide': ConversationExecutor(self),
+            'query_new_data_with_chart': FullQueryExecutor(self),
+            'reuse_data_regenerate_chart': ReuseDataExecutor(self),
+            'query_temp_table_with_chart': TempTableQueryExecutor(self),
+            'query_data_only': DataOnlyExecutor(self),
+        }
+        
         logger.info("报表生成服务初始化完成")
 
     async def generate_report(
@@ -118,201 +137,53 @@ class ReportService:
                 f"data_sources={len(data_source_ids)}"
             )
             
-            # 步骤1: 获取会话上下文
-            context = await self.session.get_context(session_id, limit=5)
-            logger.debug(f"获取会话上下文: {len(context)} 条消息")
+            # 步骤1: 获取所有交互历史（用于智能路由）
+            all_interactions = await self.session.get_all_interactions(session_id)
+            logger.debug(f"获取交互历史: {len(all_interactions)} 条")
             
-            # 步骤2: 获取数据源schema信息和 session 临时表信息
-            db_schemas, mcp_tools = await self._get_data_source_info(data_source_ids)
-            session_temp_tables = await self._get_session_temp_tables_info(session_id)
+            # 步骤2: 获取数据源概要（用于智能路由）
+            data_source_summary = await self._get_data_source_summary(data_source_ids)
             
-            # 步骤3: 调用LLM生成查询计划
-            query_plan = await self.llm.generate_query_plan(
+            # 步骤3: 智能路由决策
+            execution_plan = await self.llm.smart_route(
                 query=query,
-                db_schemas=db_schemas,
-                mcp_tools=mcp_tools,
-                context=context,
-                model=model,
-                session_temp_tables=session_temp_tables
-            )
-            
-            logger.info(
-                f"查询计划生成完成: no_match={query_plan.no_data_source_match}, "
-                f"sql_queries={len(query_plan.sql_queries)}, "
-                f"mcp_calls={len(query_plan.mcp_calls)}, "
-                f"needs_combination={query_plan.needs_combination}"
-            )
-            
-            # 检查是否无法匹配数据源
-            if query_plan.no_data_source_match:
-                # 返回友好提示，不执行查询
-                logger.info(f"查询无法匹配数据源: {query_plan.user_message}")
-                
-                # 生成interaction_id
-                interaction_id = str(uuid.uuid4())
-                
-                # 异步保存到会话历史
-                asyncio.create_task(
-                    self._save_session_async(
-                        session_id=session_id,
-                        interaction_id=interaction_id,
-                        query=query,
-                        sql_display="-- 无法匹配数据源",
-                        query_plan=query_plan.model_dump() if hasattr(query_plan, 'model_dump') else query_plan.dict(),
-                        chart_config={"type": "text"},
-                        summary=query_plan.user_message or "无法找到相关数据",
-                        data_source_ids=data_source_ids,
-                        data_snapshot=[]
-                    )
-                )
-                
-                # 返回友好提示结果
-                result = ReportResult(
-                    session_id=session_id,
-                    interaction_id=interaction_id,
-                    sql_query=None,
-                    query_plan=None,
-                    chart_config={"type": "text"},
-                    summary=query_plan.user_message or "无法找到相关数据",
-                    data=[],
-                    metadata=DataMetadata(columns=[], column_types={}, row_count=0),
-                    original_query=query,
-                    data_source_ids=data_source_ids,
-                    model=model
-                )
-                
-                logger.info(f"返回友好提示: {query_plan.user_message}")
-                return result
-            
-            # 步骤4: 执行查询计划（并行执行所有数据源查询）
-            combined_data = await self.data_source.execute_query_plan(query_plan)
-            
-            # 步骤5: 如果需要组合数据
-            if query_plan.needs_combination:
-                # 获取临时表信息
-                temp_table_info = await self._get_temp_table_info()
-                
-                # 调用LLM生成组合SQL
-                combination_sql = await self.llm.generate_combination_sql(
-                    query=query,
-                    temp_table_info=temp_table_info,
-                    model=model
-                )
-                
-                logger.info(f"组合SQL生成完成: {combination_sql[:100]}...")
-                
-                # 执行组合SQL
-                combined_data = await self.data_source.combine_data_with_sql(
-                    combination_sql=combination_sql
-                )
-                
-                logger.info(f"数据组合完成: rows={len(combined_data.data)}")
-            
-            # 步骤6: 应用敏感信息过滤
-            filtered_data = await self._apply_filters_to_combined_data(
-                combined_data=combined_data,
-                data_source_ids=data_source_ids
-            )
-            
-            logger.info(f"敏感信息过滤完成: rows={len(filtered_data)}")
-            
-            # 步骤7: 获取数据元信息
-            metadata = self.data_source.get_combined_metadata(
-                CombinedData(data=filtered_data, columns=combined_data.columns)
-            )
-            
-            logger.debug(
-                f"数据元信息: columns={len(metadata.columns)}, "
-                f"rows={metadata.row_count}"
-            )
-            
-            # 步骤8: 调用LLM生成图表配置和总结
-            chart_suggestion = await self.llm.analyze_data_and_suggest_chart(
-                query=query,
-                metadata=metadata,
+                all_interactions=all_interactions,
+                data_source_summary=data_source_summary,
                 model=model
             )
             
-            # 替换 summary 中的占位符（用于 text 类型）
-            final_summary = self._replace_placeholders_in_summary(
-                chart_suggestion.summary,
-                filtered_data
-            )
+            logger.info(f"智能路由决策: action={execution_plan.action}")
             
-            logger.info(
-                f"图表分析完成: type={chart_suggestion.chart_type}, "
-                f"summary_length={len(final_summary)}"
-            )
+            # 步骤4: 使用执行器执行
+            executor = self.executors.get(execution_plan.action)
             
-            # 步骤9: 清理临时表
-            if query_plan.needs_combination:
-                self.data_source.cleanup_temp_tables()
-                logger.debug("临时表清理完成")
+            # 确定使用的查询文本：优先使用 refined_query，否则使用原始 query
+            effective_query = execution_plan.refined_query or query
             
-            # 步骤10: 保存完整数据到临时表并异步保存会话历史
-            # 构建SQL查询字符串（用于显示）
-            sql_display = self._build_sql_display(query_plan)
-            
-            # 生成interaction_id（用于返回）
-            interaction_id = str(uuid.uuid4())
-            
-            # 判断是否需要创建临时表
-            should_create_temp_table = self._should_create_temp_table(query_plan)
-            
-            if should_create_temp_table:
-                # 保存完整数据到临时表
-                interaction_num = await self._get_next_interaction_num(session_id)
-                temp_table_name = self.data_source.create_session_temp_table(
+            if executor:
+                # 使用执行器执行
+                return await executor.execute(
+                    query=effective_query,
+                    original_query=query,  # 保留原始查询用于日志和显示
                     session_id=session_id,
-                    interaction_num=interaction_num,
-                    data=filtered_data,
-                    columns=combined_data.columns
-                )
-                logger.info(f"数据已保存到临时表: {temp_table_name}, rows={len(filtered_data)}")
-            else:
-                temp_table_name = None
-                logger.info(f"跳过临时表创建（简单子集查询）: rows={len(filtered_data)}")
-            
-            # 创建后台任务异步保存会话
-            asyncio.create_task(
-                self._save_session_async(
-                    session_id=session_id,
-                    interaction_id=interaction_id,
-                    query=query,
-                    sql_display=sql_display,
-                    query_plan=query_plan.model_dump() if hasattr(query_plan, 'model_dump') else query_plan.dict(),
-                    chart_config=chart_suggestion.chart_config,
-                    summary=final_summary,
                     data_source_ids=data_source_ids,
-                    data_snapshot=filtered_data[:10],
-                    temp_table_name=temp_table_name
+                    model=model,
+                    response=execution_plan.direct_response,
+                    suggestions=execution_plan.suggestions
                 )
-            )
             
-            logger.info(f"会话交互将异步保存: interaction_id={interaction_id}")
-            
-            # 构建返回结果
-            result = ReportResult(
-                session_id=session_id,
-                interaction_id=interaction_id,
-                sql_query=sql_display,
-                query_plan=query_plan,
-                chart_config=chart_suggestion.chart_config,
-                summary=final_summary,
-                data=filtered_data,
-                metadata=metadata,
+            # 步骤5: 如果没有对应的执行器，使用完整查询流程（兜底）
+            logger.warning(f"未找到执行器: {execution_plan.action}，使用完整查询流程")
+            executor = self.executors['query_new_data_with_chart']
+            return await executor.execute(
+                query=effective_query,
                 original_query=query,
+                session_id=session_id,
                 data_source_ids=data_source_ids,
                 model=model
             )
             
-            logger.info(
-                f"报表生成完成: session_id={session_id}, "
-                f"interaction_id={interaction_id}, "
-                f"data_rows={len(filtered_data)}"
-            )
-            
-            return result
+            # 原有的完整查询逻辑已迁移到 FullQueryExecutor
             
         except Exception as e:
             logger.error(
@@ -450,40 +321,73 @@ class ReportService:
         
         return temp_tables_info
     
-    def _should_create_temp_table(self, query_plan: QueryPlan) -> bool:
+    async def _get_data_source_summary(
+        self,
+        data_source_ids: List[str]
+    ) -> Dict[str, Any]:
         """
-        判断是否需要创建临时表
-        
-        规则：
-        1. 查询了原始数据源（非临时表）→ 需要创建
-        2. 有 MCP 调用 → 需要创建
-        3. 需要数据组合 → 需要创建
-        4. 只查询临时表的简单子集 → 不需要创建
+        获取数据源概要信息（用于智能路由）
         
         Args:
-            query_plan: 查询计划
-            
+            data_source_ids: 数据源ID列表
+        
         Returns:
-            是否需要创建临时表
+            数据源概要字典 {"databases": [...], "mcp_servers": [...]}
         """
-        # 规则1：查询了原始数据源
-        if any(q.db_config_id != "__session__" for q in query_plan.sql_queries):
-            logger.debug("需要创建临时表：查询了原始数据源")
-            return True
+        summary = {"databases": [], "mcp_servers": []}
         
-        # 规则2：有 MCP 调用
-        if len(query_plan.mcp_calls) > 0:
-            logger.debug("需要创建临时表：有 MCP 调用")
-            return True
+        with self.db.get_session() as session:
+            from ..models.database_config import DatabaseConfig
+            from ..models.mcp_server_config import MCPServerConfig
+            
+            for source_id in data_source_ids:
+                # 检查是否是数据库
+                db_config = session.query(DatabaseConfig).filter(
+                    DatabaseConfig.id == source_id
+                ).first()
+                
+                if db_config:
+                    # 优先使用 schema_summary（如果已生成）
+                    if db_config.schema_summary:
+                        description = db_config.schema_summary
+                    # 降级1：使用 schema_description 的前500字符
+                    elif db_config.schema_description:
+                        description = db_config.schema_description[:500] + "..."
+                    # 降级2：使用表名列表
+                    else:
+                        try:
+                            schema_info = await self.data_source.db.get_schema_info(source_id)
+                            table_names = list(schema_info.tables.keys())
+                            
+                            if len(table_names) <= 15:
+                                description = f"包含表：{', '.join(table_names)}"
+                            else:
+                                description = f"包含{len(table_names)}个表，主要有：{', '.join(table_names[:15])}等"
+                        except:
+                            description = f"{db_config.type}数据库"
+                    
+                    summary["databases"].append({
+                        "id": db_config.id,
+                        "name": db_config.name,
+                        "description": description
+                    })
+                    continue
+                
+                # 检查是否是MCP服务器
+                mcp_config = session.query(MCPServerConfig).filter(
+                    MCPServerConfig.id == source_id
+                ).first()
+                
+                if mcp_config:
+                    summary["mcp_servers"].append({
+                        "id": mcp_config.id,
+                        "name": mcp_config.name,
+                        "description": mcp_config.description or "MCP服务"
+                    })
         
-        # 规则3：需要数据组合
-        if query_plan.needs_combination:
-            logger.debug("需要创建临时表：需要数据组合")
-            return True
-        
-        # 规则4：只查询临时表的简单子集，不需要创建
-        logger.debug("不需要创建临时表：简单临时表查询")
-        return False
+        return summary
+    
+
     
     async def _get_next_interaction_num(self, session_id: str) -> int:
         """
@@ -647,117 +551,6 @@ class ReportService:
                 f"异步保存会话失败: interaction_id={interaction_id}, error={str(e)}",
                 exc_info=True
             )
-    
-    def _build_sql_display(self, query_plan: QueryPlan) -> str:
-        """
-        构建用于显示的SQL查询字符串
-        
-        Args:
-            query_plan: 查询计划
-        
-        Returns:
-            SQL显示字符串
-        """
-        sql_parts = []
-        
-        # 添加SQL查询
-        for i, sql_query in enumerate(query_plan.sql_queries, 1):
-            sql_parts.append(f"-- 数据库查询 {i} ({sql_query.source_alias})")
-            sql_parts.append(sql_query.sql)
-            sql_parts.append("")
-        
-        # 添加MCP调用
-        for i, mcp_call in enumerate(query_plan.mcp_calls, 1):
-            sql_parts.append(f"-- MCP工具调用 {i} ({mcp_call.source_alias})")
-            sql_parts.append(f"-- 工具: {mcp_call.tool_name}")
-            sql_parts.append(f"-- 参数: {json.dumps(mcp_call.parameters, ensure_ascii=False)}")
-            sql_parts.append("")
-        
-        return "\n".join(sql_parts)
-    
-    def _replace_placeholders_in_summary(
-        self,
-        summary: str,
-        data: List[Dict[str, Any]]
-    ) -> str:
-        """
-        替换 summary 中的数据占位符
-        
-        支持多种占位符格式：
-        - {{DATA_PLACEHOLDER}}: 第一行第一列的值
-        - {{DATA_PLACEHOLDER_X}}: 第一行第一列的值（通常是类别名）
-        - {{DATA_PLACEHOLDER_1}}, {{DATA_PLACEHOLDER_2}}, ...: 第一行的第1、2、...列的值
-        
-        Args:
-            summary: 包含占位符的摘要文本
-            data: 数据列表
-        
-        Returns:
-            替换后的摘要文本
-        """
-        import re
-        
-        if not summary or "{{DATA_PLACEHOLDER" not in summary:
-            return summary
-        
-        # 如果数据为空，替换所有占位符为"无数据"
-        if not data or not data[0]:
-            result = re.sub(r'\{\{DATA_PLACEHOLDER[^}]*\}\}', '无数据', summary)
-            logger.debug(f"数据为空，替换所有占位符: '{summary}' -> '{result}'")
-            return result
-        
-        # 获取第一行数据
-        first_row = data[0]
-        columns = list(first_row.keys())
-        
-        # 格式化值的辅助函数
-        def format_value(value):
-            if value is None:
-                return "无数据"
-            if isinstance(value, (int, float)):
-                return f"{value:,}"
-            return str(value)
-        
-        result = summary
-        
-        # 查找所有占位符
-        placeholders = re.findall(r'\{\{DATA_PLACEHOLDER[^}]*\}\}', summary)
-        
-        for placeholder in placeholders:
-            # 提取占位符类型
-            if placeholder == "{{DATA_PLACEHOLDER}}":
-                # 默认占位符：取第一列的值
-                value = first_row.get(columns[0]) if columns else None
-                formatted_value = format_value(value)
-                result = result.replace(placeholder, formatted_value)
-                logger.debug(f"替换 {placeholder} -> {formatted_value} (列: {columns[0] if columns else 'N/A'})")
-                
-            elif placeholder == "{{DATA_PLACEHOLDER_X}}":
-                # X轴占位符：取第一列的值（通常是类别名）
-                value = first_row.get(columns[0]) if columns else None
-                formatted_value = format_value(value)
-                result = result.replace(placeholder, formatted_value)
-                logger.debug(f"替换 {placeholder} -> {formatted_value} (列: {columns[0] if columns else 'N/A'})")
-                
-            else:
-                # 带索引的占位符：{{DATA_PLACEHOLDER_1}}, {{DATA_PLACEHOLDER_2}}, ...
-                match = re.match(r'\{\{DATA_PLACEHOLDER_(\d+)\}\}', placeholder)
-                if match:
-                    index = int(match.group(1)) - 1  # 转换为0-based索引
-                    if 0 <= index < len(columns):
-                        column_name = columns[index]
-                        value = first_row.get(column_name)
-                        formatted_value = format_value(value)
-                        result = result.replace(placeholder, formatted_value)
-                        logger.debug(f"替换 {placeholder} -> {formatted_value} (列: {column_name})")
-                    else:
-                        # 索引超出范围
-                        result = result.replace(placeholder, "无数据")
-                        logger.warning(f"占位符索引超出范围: {placeholder}, 列数: {len(columns)}")
-        
-        logger.debug(f"占位符替换完成: '{summary}' -> '{result}'")
-        
-        return result
 
     async def run_saved_report(
         self,
@@ -810,15 +603,21 @@ class ReportService:
                 f"常用报表配置加载完成: name={saved_report.name}, "
                 f"data_sources={len(data_source_ids)}"
             )
+            logger.debug(f"查询计划字典: {json.dumps(query_plan_dict, ensure_ascii=False)[:500]}")
             
             # 步骤2: 重建QueryPlan对象
             from .dto import SQLQuery, MCPCall
             
+            sql_queries_data = query_plan_dict.get("sql_queries", [])
+            mcp_calls_data = query_plan_dict.get("mcp_calls", [])
+            
+            logger.debug(f"SQL查询数量: {len(sql_queries_data)}, MCP调用数量: {len(mcp_calls_data)}")
+            
             query_plan = QueryPlan(
                 no_data_source_match=query_plan_dict.get("no_data_source_match", False),
                 user_message=query_plan_dict.get("user_message"),
-                sql_queries=[SQLQuery(**q) for q in query_plan_dict.get("sql_queries", [])],
-                mcp_calls=[MCPCall(**c) for c in query_plan_dict.get("mcp_calls", [])],
+                sql_queries=[SQLQuery(**q) for q in sql_queries_data],
+                mcp_calls=[MCPCall(**c) for c in mcp_calls_data],
                 needs_combination=query_plan_dict.get("needs_combination", False),
                 combination_strategy=query_plan_dict.get("combination_strategy")
             )
@@ -828,8 +627,12 @@ class ReportService:
             
             # 步骤4: 如果需要组合数据
             if query_plan.needs_combination:
-                # 获取临时表信息
-                temp_table_info = await self._get_temp_table_info()
+                # 优先使用最近创建的临时表信息（避免竞态条件）
+                temp_table_info = self.data_source.get_last_temp_table_info()
+                
+                # 如果没有缓存的信息，则从数据库查询（兜底）
+                if not temp_table_info:
+                    temp_table_info = await self._get_temp_table_info()
                 
                 # 使用保存的组合策略或重新生成
                 if query_plan.combination_strategy:
@@ -883,7 +686,7 @@ class ReportService:
                 
                 # 使用新的图表配置和总结，并替换占位符
                 final_chart_config = chart_suggestion.chart_config
-                final_summary = self._replace_placeholders_in_summary(
+                final_summary = replace_placeholders_in_summary(
                     chart_suggestion.summary,
                     filtered_data
                 )
@@ -895,7 +698,7 @@ class ReportService:
                 
                 # 使用保存的summary并替换占位符
                 if saved_report.summary:
-                    final_summary = self._replace_placeholders_in_summary(
+                    final_summary = replace_placeholders_in_summary(
                         saved_report.summary,
                         filtered_data
                     )
@@ -913,7 +716,7 @@ class ReportService:
             # 步骤9: 如果提供了session_id，异步保存到会话历史
             interaction_id = None
             if session_id:
-                sql_display = self._build_sql_display(query_plan)
+                sql_display = build_sql_display(query_plan)
                 
                 # 生成interaction_id
                 interaction_id = str(uuid.uuid4())
@@ -939,7 +742,7 @@ class ReportService:
             result = ReportResult(
                 session_id=session_id or "",
                 interaction_id=interaction_id or "",
-                sql_query=self._build_sql_display(query_plan),
+                sql_query=build_sql_display(query_plan),
                 query_plan=query_plan,
                 chart_config=final_chart_config,
                 summary=final_summary,

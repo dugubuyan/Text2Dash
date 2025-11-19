@@ -174,27 +174,32 @@ def main():
         ("test_mcp_connector.py", "MCP连接器测试", "normal"),
         ("test_filter_service.py", "敏感信息过滤服务测试", "normal"),
         ("test_data_source_manager.py", "数据源管理器测试", "normal"),
+        ("test_database_adapters.py", "数据库适配器测试", "normal"),
     ]
     
     database_tests = [
         ("test_database_connector.py", "数据库连接器测试", "normal"),
         ("test_infrastructure.py", "基础设施测试", "normal"),
+        ("test_session_temp_table_new.py", "Session临时表测试（新）", "normal"),
+        ("test_smart_temp_table_creation.py", "智能临时表创建测试", "normal"),
     ]
     
     api_tests = [
         ("test_llm_service.py", "LLM服务测试", "normal"),
+        ("test_mcp_no_config.py", "MCP无配置测试", "normal"),
         ("test_session_manager.py", "会话管理器测试", "normal"),
         ("test_sensitive_rule_e2e.py", "敏感规则端到端测试", "normal"),
+        ("test_schema_description_feature.py", "Schema描述功能测试", "normal"),
     ]
     
     pytest_tests = [
         ("test_report_service.py", "报表服务测试", "pytest"),
         ("test_export_service.py", "导出服务测试", "pytest"),
+        ("test_saved_report_summary.py", "保存报表摘要测试", "pytest"),
     ]
     
     integration_tests = [
         ("test_e2e_integration.py", "端到端集成测试", "pytest"),
-        ("test_session_temp_table.py", "Session临时表测试", "normal"),
     ]
     
     performance_tests = [

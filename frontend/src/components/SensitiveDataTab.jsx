@@ -101,8 +101,11 @@ const SensitiveDataTab = () => {
         return;
       }
 
+      // 获取选中的数据库ID
+      const dbConfigId = form.getFieldValue('db_config_id');
+
       setParsing(true);
-      const response = await sensitiveRuleService.parseRule(description);
+      const response = await sensitiveRuleService.parseRule(description, dbConfigId);
       const parsed = response.data;
       
       setParsedRule(parsed);

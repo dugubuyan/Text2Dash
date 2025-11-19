@@ -42,6 +42,7 @@ class UpdateSensitiveRuleRequest(BaseModel):
 class ParseRuleRequest(BaseModel):
     """解析规则请求"""
     natural_language: str = Field(..., description="自然语言描述的规则")
+    db_config_id: Optional[str] = Field(None, description="数据库配置ID，用于获取schema信息")
     model: str = Field(default="gemini/gemini-2.0-flash", description="使用的LLM模型")
 
 
@@ -270,13 +271,22 @@ async def parse_sensitive_rule(request: ParseRuleRequest):
     将自然语言描述转换为结构化的敏感信息规则
     """
     try:
-        logger.info(f"收到解析敏感信息规则请求: text='{request.natural_language[:50]}...'")
+        logger.info(f"收到解析敏感信息规则请求: text='{request.natural_language[:50]}...', db_config_id={request.db_config_id}")
+        
+        # 获取数据库schema信息（如果提供了db_config_id）
+        db_schema_info = None
+        if request.db_config_id:
+            from ..services.database_connector import get_database_connector
+            db_connector = get_database_connector()
+            db_schema_info = await db_connector.get_schema(request.db_config_id)
+            logger.info(f"获取数据库schema信息: db_config_id={request.db_config_id}")
         
         llm_service = LLMService()
         
         # 调用LLM解析规则
         parsed_rule = await llm_service.parse_sensitive_rule(
             natural_language=request.natural_language,
+            db_schema_info=db_schema_info,
             model=request.model
         )
         
