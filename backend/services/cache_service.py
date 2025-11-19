@@ -31,6 +31,29 @@ class CacheService:
         
         logger.info(f"缓存服务初始化: max_size={max_size}, default_ttl={default_ttl}s")
     
+    def _normalize_data(self, data: Any) -> Any:
+        """
+        递归规范化数据结构，确保序列化结果稳定
+        
+        Args:
+            data: 要规范化的数据
+        
+        Returns:
+            规范化后的数据
+        """
+        if isinstance(data, dict):
+            # 递归处理字典，并按键排序
+            return {k: self._normalize_data(v) for k, v in sorted(data.items())}
+        elif isinstance(data, list):
+            # 递归处理列表中的每个元素
+            return [self._normalize_data(item) for item in data]
+        elif isinstance(data, tuple):
+            # 递归处理元组中的每个元素
+            return tuple(self._normalize_data(item) for item in data)
+        else:
+            # 基本类型直接返回
+            return data
+    
     def _generate_key(self, prefix: str, data: Any) -> str:
         """
         生成缓存键
@@ -42,8 +65,11 @@ class CacheService:
         Returns:
             缓存键
         """
+        # 先规范化数据结构（递归排序所有嵌套字典）
+        normalized_data = self._normalize_data(data)
+        
         # 将数据序列化为JSON字符串
-        data_str = json.dumps(data, sort_keys=True, ensure_ascii=False)
+        data_str = json.dumps(normalized_data, sort_keys=True, ensure_ascii=False)
         
         # 生成哈希
         hash_obj = hashlib.md5(data_str.encode('utf-8'))

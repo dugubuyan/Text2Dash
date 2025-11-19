@@ -1,0 +1,59 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景渐变圆 -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1890ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#096dd9;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="chartGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.95" />
+      <stop offset="100%" style="stop-color:#ffffff;stop-opacity:0.85" />
+    </linearGradient>
+  </defs>
+  
+  <!-- 背景圆形 -->
+  <circle cx="64" cy="64" r="60" fill="url(#bgGradient)"/>
+  
+  <!-- 数据图表元素 - 柱状图 -->
+  <g transform="translate(32, 48)">
+    <!-- 柱子1 -->
+    <rect x="4" y="24" width="10" height="20" rx="2" fill="url(#chartGradient)" opacity="0.9">
+      <animate attributeName="height" values="20;28;20" dur="2s" repeatCount="indefinite"/>
+      <animate attributeName="y" values="24;16;24" dur="2s" repeatCount="indefinite"/>
+    </rect>
+    
+    <!-- 柱子2 -->
+    <rect x="20" y="12" width="10" height="32" rx="2" fill="url(#chartGradient)" opacity="0.9">
+      <animate attributeName="height" values="32;38;32" dur="2.5s" repeatCount="indefinite"/>
+      <animate attributeName="y" values="12;6;12" dur="2.5s" repeatCount="indefinite"/>
+    </rect>
+    
+    <!-- 柱子3 -->
+    <rect x="36" y="18" width="10" height="26" rx="2" fill="url(#chartGradient)" opacity="0.9">
+      <animate attributeName="height" values="26;34;26" dur="2.2s" repeatCount="indefinite"/>
+      <animate attributeName="y" values="18;10;18" dur="2.2s" repeatCount="indefinite"/>
+    </rect>
+    
+    <!-- 柱子4 -->
+    <rect x="52" y="8" width="10" height="36" rx="2" fill="url(#chartGradient)" opacity="0.9">
+      <animate attributeName="height" values="36;42;36" dur="2.8s" repeatCount="indefinite"/>
+      <animate attributeName="y" values="8;2;8" dur="2.8s" repeatCount="indefinite"/>
+    </rect>
+    
+    <!-- 基线 -->
+    <line x1="0" y1="46" x2="66" y2="46" stroke="white" stroke-width="2" opacity="0.6" stroke-linecap="round"/>
+  </g>
+  
+  <!-- AI 闪光效果 -->
+  <g transform="translate(82, 32)">
+    <circle cx="0" cy="0" r="3" fill="white" opacity="0.9">
+      <animate attributeName="opacity" values="0.9;0.3;0.9" dur="1.5s" repeatCount="indefinite"/>
+    </circle>
+    <path d="M -8,-8 L 0,0 L -8,8" stroke="white" stroke-width="2" fill="none" opacity="0.8" stroke-linecap="round">
+      <animate attributeName="opacity" values="0.8;0.2;0.8" dur="1.5s" repeatCount="indefinite"/>
+    </path>
+    <path d="M 8,-8 L 0,0 L 8,8" stroke="white" stroke-width="2" fill="none" opacity="0.8" stroke-linecap="round">
+      <animate attributeName="opacity" values="0.8;0.2;0.8" dur="1.5s" repeatCount="indefinite"/>
+    </path>
+  </g>
+</svg>

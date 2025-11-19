@@ -109,6 +109,10 @@ async def create_database_config(request: CreateDatabaseRequest):
                 updated_at=to_iso_string(db_config.updated_at)
             )
         
+        # 后台异步生成 schema_summary（不阻塞响应）
+        import asyncio
+        asyncio.create_task(_generate_and_save_schema_summary(config_id))
+        
         logger.info(f"数据库配置创建成功: id={config_id}")
         return response
         
@@ -254,6 +258,11 @@ async def update_database_config(config_id: str, request: UpdateDatabaseRequest)
                 updated_at=to_iso_string(config.updated_at)
             )
         
+        # 如果 schema_description 有变化，重新生成 schema_summary
+        if request.schema_description is not None:
+            import asyncio
+            asyncio.create_task(_generate_and_save_schema_summary(config_id))
+        
         logger.info(f"数据库配置更新成功: id={config_id}")
         return response
         
@@ -344,3 +353,62 @@ async def test_database_connection(config_id: str):
             message="连接测试失败",
             error=str(e)
         )
+
+
+# ============ 辅助函数 ============
+
+async def _generate_and_save_schema_summary(db_config_id: str):
+    """
+    后台任务：生成并保存 schema summary
+    
+    Args:
+        db_config_id: 数据库配置ID
+    """
+    try:
+        from ..services.llm_service import LLMService
+        from ..services.database_connector import get_database_connector
+        
+        db = get_database()
+        llm = LLMService()
+        
+        with db.get_session() as session:
+            db_config = session.query(DatabaseConfig).filter(
+                DatabaseConfig.id == db_config_id
+            ).first()
+            
+            if not db_config:
+                logger.warning(f"数据库配置不存在，无法生成概要: {db_config_id}")
+                return
+            
+            # 生成 schema_summary
+            if db_config.use_schema_file and db_config.schema_description:
+                # 从详细版生成
+                logger.info(f"从 schema_description 生成概要: {db_config.name}")
+                schema_summary = await llm.generate_schema_summary(
+                    schema_description=db_config.schema_description,
+                    db_name=db_config.name
+                )
+            else:
+                # 从数据库表名生成
+                logger.info(f"从数据库表名生成概要: {db_config.name}")
+                try:
+                    db_connector = get_database_connector()
+                    schema_info = await db_connector.get_schema_info(db_config_id)
+                    table_names = list(schema_info.tables.keys())
+                    
+                    schema_summary = await llm.generate_schema_summary_from_tables(
+                        table_names=table_names,
+                        db_name=db_config.name
+                    )
+                except Exception as e:
+                    logger.error(f"从数据库获取表名失败: {e}")
+                    schema_summary = f"# {db_config.name}\n\n数据库概要生成失败。"
+            
+            # 保存
+            db_config.schema_summary = schema_summary
+            session.commit()
+            
+            logger.info(f"Schema summary 自动生成成功: {db_config_id}")
+            
+    except Exception as e:
+        logger.error(f"自动生成 schema summary 失败: {e}", exc_info=True)

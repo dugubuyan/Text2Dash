@@ -1,17 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Row, Col, Typography, Space } from 'antd';
-import { BarChartOutlined } from '@ant-design/icons';
-import { QueryInput, ReportDisplay, SessionHistory } from '../components';
+import { Row, Col, Typography, Button } from 'antd';
+
+import { QueryInput, ReportDisplay, ChatMessages } from '../components';
 import { reportService, sessionService } from '../services';
 import { showError, showSuccess } from '../utils/notification';
-
-const { Title } = Typography;
 
 const HomePage = () => {
   const [sessionId, setSessionId] = useState(null);
   const [reportData, setReportData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [hasStarted, setHasStarted] = useState(false);
+  const [messages, setMessages] = useState([]);
 
   useEffect(() => {
     initializeSession();
@@ -27,67 +25,89 @@ const HomePage = () => {
   };
 
   const handleQuerySubmit = async (queryData) => {
+    // 添加用户消息到对话
+    const userMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: queryData.query,
+      created_at: new Date().toISOString()
+    };
+    setMessages(prev => [...prev, userMessage]);
+
     try {
       setLoading(true);
-      setHasStarted(true); // 标记会话已开始
       
       console.log('发送报表生成请求:', queryData);
       const response = await reportService.generateReport(queryData);
       console.log('收到报表响应:', response);
-      console.log('报表数据:', response.data);
-      console.log('报表数据 JSON:', JSON.stringify(response.data, null, 2));
+      console.log('响应数据详情:', {
+        hasData: !!response.data,
+        dataKeys: response.data ? Object.keys(response.data) : [],
+        dataArray: response.data?.data,
+        dataLength: response.data?.data?.length,
+        chartConfig: response.data?.chart_config,
+        summary: response.data?.summary
+      });
       
       if (response.data) {
-        setReportData(response.data);
-        console.log('已设置 reportData 状态');
-        showSuccess('报表生成成功');
+        // 修复：检查是否有数据或图表配置
+        const hasData = response.data.data && response.data.data.length > 0;
+        const hasChartConfig = response.data.chart_config !== null && response.data.chart_config !== undefined;
         
-        // 延迟刷新历史记录，等待后端异步保存完成
-        setTimeout(() => {
-          if (window.refreshSessionHistory) {
-            window.refreshSessionHistory();
-          }
-        }, 1000);
+        // 检查是否是纯文本类型（clarify_and_guide 或 direct_conversation）
+        const isTextOnly = response.data.chart_config?.type === 'text';
+        
+        // 只有当有数据或有非文本类型的图表配置时，才认为有报表
+        const hasReport = (hasData || hasChartConfig) && !isTextOnly;
+        
+        console.log('报表检查结果:', { hasData, hasChartConfig, isTextOnly, hasReport });
+        
+        // 添加AI回复到对话
+        const assistantMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          summary: response.data.summary || '已完成分析',
+          has_report: hasReport,
+          created_at: new Date().toISOString(),
+          reportData: hasReport ? response.data : null
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+        
+        // 如果有报表数据，设置当前报表
+        if (hasReport) {
+          console.log('设置报表数据:', response.data);
+          setReportData(response.data);
+          showSuccess('报表生成成功');
+        } else {
+          console.log('没有报表数据，仅显示文本回复');
+          // 如果之前有报表，清除它
+          setReportData(null);
+          showSuccess('查询完成');
+        }
       } else {
         console.error('响应中没有数据');
         showError('报表生成失败：响应数据为空');
       }
     } catch (error) {
       console.error('报表生成错误:', error);
+      const errorMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        summary: '抱歉，处理您的请求时出现了错误：' + (error.response?.data?.detail || error.message),
+        has_report: false,
+        created_at: new Date().toISOString()
+      };
+      setMessages(prev => [...prev, errorMessage]);
       showError('生成报表失败: ' + (error.response?.data?.detail || error.message));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSelectHistory = async (historyItem) => {
-    try {
-      setHasStarted(true);
-      
-      // 检查是否有数据快照
-      const hasData = historyItem.data_snapshot && historyItem.data_snapshot.length > 0;
-      
-      // Reconstruct report data from history item
-      setReportData({
-        query_plan: historyItem.query_plan || {},
-        chart_config: historyItem.chart_config,
-        summary: historyItem.summary,
-        original_query: historyItem.user_query,
-        data_source_ids: historyItem.data_source_ids || [],
-        data: hasData ? historyItem.data_snapshot : [],
-        metadata: hasData ? {
-          columns: Object.keys(historyItem.data_snapshot[0] || {}),
-          row_count: historyItem.data_snapshot.length
-        } : { columns: [], row_count: 0 },
-      });
-      
-      if (hasData) {
-        showSuccess('已加载历史报表');
-      } else {
-        showSuccess('已加载历史摘要（无完整数据）');
-      }
-    } catch (error) {
-      showError('加载历史报表失败', error.message);
+  const handleViewReport = (message) => {
+    if (message.reportData) {
+      setReportData(message.reportData);
+      showSuccess('已加载报表');
     }
   };
 
@@ -97,11 +117,9 @@ const HomePage = () => {
       const response = await sessionService.createSession('default_user');
       setSessionId(response.data.id);
       
-      // 清空当前报表数据
+      // 清空所有状态
       setReportData(null);
-      
-      // 重置为欢迎页状态
-      setHasStarted(false);
+      setMessages([]);
       
       showSuccess('已开启新对话');
     } catch (error) {
@@ -109,8 +127,16 @@ const HomePage = () => {
     }
   };
 
+
+
+  // 准备对话消息（添加查看报表的回调）
+  const chatMessages = messages.map(msg => ({
+    ...msg,
+    onViewReport: msg.has_report ? () => handleViewReport(msg) : null
+  }));
+
   // 布局：未开始会话时显示欢迎词和输入框
-  if (!hasStarted) {
+  if (messages.length === 0) {
     return (
       <div style={{ 
         display: 'flex', 
@@ -154,61 +180,65 @@ const HomePage = () => {
     );
   }
 
-  // 布局：会话开始后，中间显示结果，右侧显示历史和输入框
+  // 布局：有报表时显示左右分栏，无报表时全屏显示对话
   return (
     <Row gutter={[0, 0]} style={{ height: 'calc(100vh - 64px)' }}>
-      {/* 左侧：报表显示区域 */}
-      <Col xs={24} lg={16} style={{ 
-        height: '100%', 
-        overflowY: 'auto',
-        padding: '24px',
-        backgroundColor: '#fff'
-      }}>
-        {reportData ? (
+      {/* 左侧：报表显示区域（仅在有报表时显示） */}
+      {reportData && (
+        <Col xs={24} lg={14} style={{ 
+          height: '100%', 
+          overflowY: 'auto',
+          padding: '24px',
+          backgroundColor: '#fff',
+          position: 'relative'
+        }}>
           <ReportDisplay reportData={reportData} />
-        ) : (
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            height: '100%',
-            color: '#999'
-          }}>
-            <Space direction="vertical" align="center" size="large">
-              <BarChartOutlined style={{ fontSize: 64 }} />
-              <Title level={4} type="secondary">等待生成报表...</Title>
-            </Space>
-          </div>
-        )}
-      </Col>
+        </Col>
+      )}
 
-      {/* 右侧：历史记录 + 输入框 */}
-      <Col xs={24} lg={8} style={{ 
+      {/* 右侧：对话区域 + 输入框 */}
+      <Col xs={24} lg={reportData ? 10 : 24} style={{ 
         height: '100%',
-        borderLeft: '1px solid #f0f0f0',
+        borderLeft: reportData ? '1px solid #f0f0f0' : 'none',
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: '#f5f5f5'
+        backgroundColor: '#fff'
       }}>
-        {/* 历史记录区域 */}
+        {/* 顶部工具栏 */}
+        <div style={{
+          padding: '16px 20px',
+          borderBottom: '1px solid #f0f0f0',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          backgroundColor: '#fafafa'
+        }}>
+          <Typography.Text strong style={{ fontSize: 16 }}>
+            对话
+          </Typography.Text>
+          <Button
+            type="primary"
+            size="small"
+            onClick={handleNewChat}
+          >
+            新对话
+          </Button>
+        </div>
+
+        {/* 对话消息区域 */}
         <div style={{ 
           flex: 1, 
           overflowY: 'auto',
-          padding: '24px',
-          backgroundColor: '#f5f5f5'
+          backgroundColor: '#fff'
         }}>
-          <SessionHistory
-            sessionId={sessionId}
-            onSelectHistory={handleSelectHistory}
-            onNewChat={handleNewChat}
-          />
+          <ChatMessages messages={chatMessages} />
         </div>
 
         {/* 输入框区域 */}
         <div style={{ 
           borderTop: '1px solid #e8e8e8',
           padding: '20px',
-          backgroundColor: '#f5f5f5'
+          backgroundColor: '#fafafa'
         }}>
           <QueryInput
             onSubmit={handleQuerySubmit}

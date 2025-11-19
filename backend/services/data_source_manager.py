@@ -52,6 +52,9 @@ class DataSourceManager:
             data_dir.mkdir(exist_ok=True)
             self.temp_db_path = str(data_dir / "temp_data.db")
         
+        # 存储最近一次创建的临时表信息
+        self._last_temp_table_info = {}
+        
         logger.info(f"数据源管理器初始化完成: temp_db_path={self.temp_db_path}")
 
     async def execute_query_plan(
@@ -82,19 +85,6 @@ class DataSourceManager:
                 f"mcp_calls={len(query_plan.mcp_calls)}, "
                 f"needs_combination={query_plan.needs_combination}"
             )
-            
-            # 创建并行任务列表
-            tasks = []
-            
-            # 添加数据库查询任务
-            for sql_query in query_plan.sql_queries:
-                task = self._execute_sql_query(sql_query)
-                tasks.append(task)
-            
-            # 添加MCP工具调用任务
-            for mcp_call in query_plan.mcp_calls:
-                task = self._execute_mcp_call(mcp_call)
-                tasks.append(task)
             
             # 如果有多个SQL查询，需要顺序执行（因为后续查询可能依赖前面的结果）
             if len(query_plan.sql_queries) > 1:
@@ -160,6 +150,19 @@ class DataSourceManager:
                             mcp_results.append(result)
             else:
                 # 单个查询或只有MCP调用，可以并行执行
+                # 创建并行任务列表
+                tasks = []
+                
+                # 添加数据库查询任务
+                for sql_query in query_plan.sql_queries:
+                    task = self._execute_sql_query(sql_query)
+                    tasks.append(task)
+                
+                # 添加MCP工具调用任务
+                for mcp_call in query_plan.mcp_calls:
+                    task = self._execute_mcp_call(mcp_call)
+                    tasks.append(task)
+                
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 
                 # 检查是否有错误
@@ -206,7 +209,7 @@ class DataSourceManager:
                     return CombinedData(data=[], columns=[])
             
             # 需要组合：创建临时表
-            temp_table_mapping = await self.create_temp_tables(
+            temp_table_mapping, temp_table_info = await self.create_temp_tables(
                 mcp_results=mcp_results,
                 db_results=db_results,
                 sql_queries=query_plan.sql_queries,
@@ -214,6 +217,9 @@ class DataSourceManager:
             )
             
             logger.info(f"临时表创建完成: {list(temp_table_mapping.keys())}")
+            
+            # 将临时表信息存储到实例变量中，供后续使用
+            self._last_temp_table_info = temp_table_info
             
             # 返回临时表映射信息，供后续组合使用
             # 注意：实际组合需要调用combine_data_with_sql方法
@@ -276,7 +282,7 @@ class DataSourceManager:
         db_results: List[QueryResult],
         sql_queries: List[SQLQuery],
         mcp_calls: List[MCPCall]
-    ) -> Dict[str, str]:
+    ) -> Tuple[Dict[str, str], Dict[str, Any]]:
         """
         在临时SQLite数据库中创建临时表
         将数据库查询结果和MCP数据写入临时表
@@ -288,7 +294,9 @@ class DataSourceManager:
             mcp_calls: MCP调用列表（用于获取source_alias）
             
         Returns:
-            表名映射字典 {source_alias: table_name}
+            元组 (table_mapping, temp_table_info)
+            - table_mapping: 表名映射字典 {source_alias: table_name}
+            - temp_table_info: 临时表信息字典 {table_name: {columns, source, row_count}}
         """
         try:
             # 创建或连接到临时数据库
@@ -296,19 +304,19 @@ class DataSourceManager:
             cursor = conn.cursor()
             
             table_mapping = {}
+            temp_table_info = {}
             
             # 处理数据库查询结果
             for i, (result, sql_query) in enumerate(zip(db_results, sql_queries)):
                 table_name = f"temp_{sql_query.source_alias}"
                 table_mapping[sql_query.source_alias] = table_name
                 
-                # 如果没有数据，跳过
+                # 如果没有数据，仍然创建空表（避免组合SQL报错）
                 if not result.data:
                     logger.warning(
                         f"数据库查询结果为空: {sql_query.source_alias}, "
-                        f"columns={result.columns}"
+                        f"columns={result.columns}，将创建空表"
                     )
-                    continue
                 
                 # 创建表
                 logger.debug(
@@ -319,17 +327,44 @@ class DataSourceManager:
                 self._create_table_from_data(
                     cursor=cursor,
                     table_name=table_name,
-                    data=result.data,
+                    data=result.data if result.data else [],
                     columns=result.columns
                 )
                 
-                # 插入数据
-                self._insert_data_to_table(
-                    cursor=cursor,
-                    table_name=table_name,
-                    data=result.data,
-                    columns=result.columns
-                )
+                # 插入数据（如果有数据）
+                if result.data:
+                    self._insert_data_to_table(
+                        cursor=cursor,
+                        table_name=table_name,
+                        data=result.data,
+                        columns=result.columns
+                    )
+                
+                # 收集表信息
+                column_types = {}
+                if result.data:
+                    first_row = result.data[0]
+                    for col in result.columns:
+                        value = first_row.get(col)
+                        if value is None:
+                            column_types[col] = "TEXT"
+                        elif isinstance(value, bool):
+                            column_types[col] = "INTEGER"
+                        elif isinstance(value, int):
+                            column_types[col] = "INTEGER"
+                        elif isinstance(value, float):
+                            column_types[col] = "REAL"
+                        else:
+                            column_types[col] = "TEXT"
+                else:
+                    # 如果没有数据，所有列类型默认为TEXT
+                    column_types = {col: "TEXT" for col in result.columns}
+                
+                temp_table_info[table_name] = {
+                    "columns": column_types,
+                    "source": sql_query.source_alias,
+                    "row_count": len(result.data)
+                }
                 
                 logger.info(
                     f"创建临时表: {table_name}, rows={len(result.data)}, "
@@ -341,13 +376,16 @@ class DataSourceManager:
                 table_name = f"temp_{mcp_call.source_alias}"
                 table_mapping[mcp_call.source_alias] = table_name
                 
-                # 如果没有数据，跳过
+                # 如果没有数据，仍然创建空表（避免组合SQL报错）
                 if not result.data:
-                    logger.warning(f"MCP工具返回数据为空: {mcp_call.source_alias}")
-                    continue
+                    logger.warning(f"MCP工具返回数据为空: {mcp_call.source_alias}，将创建空表")
                 
                 # 获取列名
-                columns = result.metadata.columns if result.metadata else list(result.data[0].keys())
+                if result.data:
+                    columns = result.metadata.columns if result.metadata else list(result.data[0].keys())
+                else:
+                    # 如果没有数据，尝试从metadata获取列名
+                    columns = result.metadata.columns if result.metadata else []
                 
                 logger.debug(
                     f"准备创建MCP表: {table_name}, "
@@ -359,17 +397,44 @@ class DataSourceManager:
                 self._create_table_from_data(
                     cursor=cursor,
                     table_name=table_name,
-                    data=result.data,
+                    data=result.data if result.data else [],
                     columns=columns
                 )
                 
-                # 插入数据
-                self._insert_data_to_table(
-                    cursor=cursor,
-                    table_name=table_name,
-                    data=result.data,
-                    columns=columns
-                )
+                # 插入数据（如果有数据）
+                if result.data:
+                    self._insert_data_to_table(
+                        cursor=cursor,
+                        table_name=table_name,
+                        data=result.data,
+                        columns=columns
+                    )
+                
+                # 收集表信息
+                column_types = {}
+                if result.data:
+                    first_row = result.data[0]
+                    for col in columns:
+                        value = first_row.get(col)
+                        if value is None:
+                            column_types[col] = "TEXT"
+                        elif isinstance(value, bool):
+                            column_types[col] = "INTEGER"
+                        elif isinstance(value, int):
+                            column_types[col] = "INTEGER"
+                        elif isinstance(value, float):
+                            column_types[col] = "REAL"
+                        else:
+                            column_types[col] = "TEXT"
+                else:
+                    # 如果没有数据，所有列类型默认为TEXT
+                    column_types = {col: "TEXT" for col in columns}
+                
+                temp_table_info[table_name] = {
+                    "columns": column_types,
+                    "source": mcp_call.source_alias,
+                    "row_count": len(result.data)
+                }
                 
                 logger.info(
                     f"创建临时表: {table_name}, rows={len(result.data)}, "
@@ -382,7 +447,7 @@ class DataSourceManager:
             
             logger.info(f"所有临时表创建完成: {list(table_mapping.keys())}")
             
-            return table_mapping
+            return table_mapping, temp_table_info
         
         except Exception as e:
             logger.error(
@@ -501,6 +566,15 @@ class DataSourceManager:
         cursor.executemany(insert_sql, rows)
         logger.debug(f"插入数据: {table_name}, rows={len(rows)}")
     
+    def get_last_temp_table_info(self) -> Dict[str, Any]:
+        """
+        获取最近一次创建的临时表信息
+        
+        Returns:
+            临时表信息字典 {table_name: {columns, source, row_count}}
+        """
+        return self._last_temp_table_info
+    
     def cleanup_temp_tables(self):
         """
         清理临时表和临时数据库
@@ -509,6 +583,8 @@ class DataSourceManager:
             if os.path.exists(self.temp_db_path):
                 os.remove(self.temp_db_path)
                 logger.info(f"清理临时数据库: {self.temp_db_path}")
+            # 清理缓存的表信息
+            self._last_temp_table_info = {}
         except Exception as e:
             logger.error(
                 f"清理临时数据库失败",
@@ -527,7 +603,7 @@ class DataSourceManager:
         支持：JOIN、UNION、聚合等所有SQL操作
         
         Args:
-            combination_sql: LLM生成的组合SQL语句
+            combination_sql: LLM生成的组合SQL语句（必须是SELECT语句）
             
         Returns:
             CombinedData对象，包含组合后的数据
@@ -542,7 +618,7 @@ class DataSourceManager:
             conn = sqlite3.connect(self.temp_db_path)
             cursor = conn.cursor()
             
-            # 执行组合SQL
+            # 执行组合SQL（只能访问临时表）
             cursor.execute(combination_sql)
             
             # 获取列名

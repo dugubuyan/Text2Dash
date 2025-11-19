@@ -16,7 +16,8 @@ class DatabaseConfig(Base, TimestampMixin):
     username = Column(String(255), nullable=True)
     encrypted_password = Column(Text, nullable=True)
     use_schema_file = Column(Boolean, default=False, nullable=False)  # 是否使用schema描述文件
-    schema_description = Column(Text, nullable=True)  # schema描述文件内容
+    schema_description = Column(Text, nullable=True)  # schema描述文件内容（详细版，用于查询生成）
+    schema_summary = Column(Text, nullable=True)  # schema概要（简洁版，用于智能路由）
 
     def __repr__(self):
         return f"<DatabaseConfig(id={self.id}, name={self.name}, type={self.type})>"

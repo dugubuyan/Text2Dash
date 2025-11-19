@@ -57,6 +57,84 @@ const MultiChartItem = ({ chartConfig, reportData, index }) => {
       config.xAxis.data = extractXAxisData(reportData);
     }
 
+    // Handle radar chart indicator
+    if (config.radar && reportData.data && reportData.data.length > 0) {
+      const columns = reportData.metadata?.columns || Object.keys(reportData.data[0]);
+      const numericColumns = columns.filter(col => {
+        const firstValue = reportData.data[0][col];
+        return typeof firstValue === 'number';
+      });
+      
+      // 如果radar.indicator是占位符或未定义，自动生成
+      if (!config.radar.indicator || 
+          (typeof config.radar.indicator === 'string' && 
+           config.radar.indicator.includes('DATA_PLACEHOLDER'))) {
+        
+        // 计算每列的统计信息
+        const columnStats = numericColumns.map(col => {
+          // 过滤掉null、undefined和NaN值
+          const values = reportData.data
+            .map(row => row[col])
+            .filter(val => val !== null && val !== undefined && !isNaN(val));
+          
+          if (values.length === 0) {
+            return { col, minValue: 0, maxValue: 100, range: 100 };
+          }
+          
+          const minValue = Math.min(...values);
+          const maxValue = Math.max(...values);
+          return { col, minValue, maxValue, range: maxValue - minValue };
+        });
+        
+        // 检查是否需要归一化（不同列的数值范围差异很大）
+        const ranges = columnStats.map(s => s.range);
+        const maxRange = Math.max(...ranges);
+        const minRange = Math.min(...ranges.filter(r => r > 0));
+        const needsNormalization = maxRange / minRange > 10; // 差异超过10倍
+        
+        console.log(`MultiChartItem: 雷达图列统计:`, columnStats, `需要归一化: ${needsNormalization}`);
+        
+        if (needsNormalization) {
+          // 归一化处理：将所有维度映射到0-100范围
+          config.radar.indicator = columnStats.map(stat => ({
+            name: `${stat.col}\n(${stat.minValue.toFixed(1)}-${stat.maxValue.toFixed(1)})`,
+            max: 100
+          }));
+          
+          // 更新series数据，进行归一化
+          config.series = config.series.map(series => {
+            if (series.type === 'radar' && Array.isArray(series.data)) {
+              series.data = series.data.map(item => {
+                const normalizedValue = item.value.map((val, idx) => {
+                  // 处理null值
+                  if (val === null || val === undefined || isNaN(val)) {
+                    return 0; // null值显示为0
+                  }
+                  const stat = columnStats[idx];
+                  if (stat.range === 0) return 50; // 避免除以0
+                  return ((val - stat.minValue) / stat.range) * 100;
+                });
+                return {
+                  ...item,
+                  value: normalizedValue,
+                  originalValue: item.value  // 保留原始值用于tooltip
+                };
+              });
+            }
+            return series;
+          });
+          
+          console.log(`MultiChartItem: 雷达图数据已归一化`);
+        } else {
+          // 不需要归一化，使用原始max值
+          config.radar.indicator = columnStats.map(stat => ({
+            name: stat.col,
+            max: stat.maxValue * 1.2  // 留20%余量
+          }));
+        }
+      }
+    }
+
     console.log(`渲染图表 ${index}:`, config);
 
     // Initialize chart
@@ -84,9 +162,13 @@ const MultiChartItem = ({ chartConfig, reportData, index }) => {
   };
 
   const extractDataForSeries = (series, chartConfig, reportData) => {
-    if (!reportData.data || reportData.data.length === 0) return [];
+    if (!reportData.data || reportData.data.length === 0) {
+      console.warn('MultiChartItem: 数据为空');
+      return [];
+    }
     
     const columns = reportData.metadata?.columns || Object.keys(reportData.data[0]);
+    console.log(`MultiChartItem: 提取数据 - 图表类型=${series.type}, 列=${columns}`);
     
     // For bar/line charts
     if (series.type === 'bar' || series.type === 'line') {
@@ -121,6 +203,89 @@ const MultiChartItem = ({ chartConfig, reportData, index }) => {
       }
     }
     
+    // For scatter charts
+    if (series.type === 'scatter') {
+      if (columns.length >= 2) {
+        // 找出所有数值列
+        const numericColumns = columns.filter(col => {
+          const firstValue = reportData.data[0][col];
+          return typeof firstValue === 'number';
+        });
+        
+        // 找出第一个非数值列作为name（如专业名称）
+        const nameColumn = columns.find(col => {
+          const firstValue = reportData.data[0][col];
+          return typeof firstValue !== 'number';
+        });
+        
+        console.log(`MultiChartItem: 散点图 - 所有列=${columns}, 数值列=${numericColumns}, name列=${nameColumn}`);
+        
+        // 如果有至少2个数值列，使用它们
+        if (numericColumns.length >= 2) {
+          const xCol = numericColumns[0];
+          const yCol = numericColumns[1];
+          const scatterData = reportData.data.map(row => {
+            const dataPoint = {
+              value: [row[xCol], row[yCol]],
+              // 如果有name列，添加name属性
+              ...(nameColumn ? { name: row[nameColumn] } : {}),
+              // 保留所有原始数据用于tooltip
+              ...row
+            };
+            return dataPoint;
+          });
+          console.log(`MultiChartItem: 散点图数据 - 列[${xCol}, ${yCol}], name=${nameColumn}`, scatterData);
+          return scatterData;
+        }
+        
+        // 否则使用前两列
+        const scatterData = reportData.data.map(row => {
+          const dataPoint = {
+            value: [row[columns[0]], row[columns[1]]],
+            ...(nameColumn ? { name: row[nameColumn] } : {}),
+            ...row
+          };
+          return dataPoint;
+        });
+        console.log(`MultiChartItem: 散点图数据（默认） - 列[${columns[0]}, ${columns[1]}], name=${nameColumn}`, scatterData);
+        return scatterData;
+      }
+    }
+    
+    // For radar charts
+    if (series.type === 'radar') {
+      // 找出所有数值列
+      const numericColumns = columns.filter(col => {
+        const firstValue = reportData.data[0][col];
+        return typeof firstValue === 'number';
+      });
+      
+      // 找出第一个非数值列作为name
+      const nameColumn = columns.find(col => {
+        const firstValue = reportData.data[0][col];
+        return typeof firstValue !== 'number';
+      });
+      
+      console.log(`MultiChartItem: 雷达图 - 所有列=${columns}, 数值列=${numericColumns}, name列=${nameColumn}`);
+      
+      // 雷达图数据：每行是一个数据项，包含多个维度的值
+      const radarData = reportData.data.map((row, rowIdx) => {
+        const values = numericColumns.map(col => {
+          const val = row[col];
+          console.log(`MultiChartItem: 雷达图提取 - 行${rowIdx}, 列${col}, 值=${val}, 类型=${typeof val}`);
+          return val;
+        });
+        return {
+          value: values,
+          name: nameColumn ? row[nameColumn] : '',
+          ...row  // 保留所有原始数据
+        };
+      });
+      
+      console.log(`MultiChartItem: 雷达图数据`, radarData);
+      return radarData;
+    }
+    
     // Default
     if (columns.length >= 2) {
       return reportData.data.map(row => row[columns[1]]);
@@ -149,8 +314,17 @@ const ReportDisplay = ({ reportData, onSave }) => {
 
   useEffect(() => {
     console.log('ReportDisplay 收到数据:', reportData);
+    console.log('ReportDisplay 数据详情:', {
+      hasReportData: !!reportData,
+      hasChartConfig: !!reportData?.chart_config,
+      chartConfigType: reportData?.chart_config ? typeof reportData.chart_config : 'undefined',
+      hasData: !!reportData?.data,
+      dataLength: reportData?.data?.length,
+      summary: reportData?.summary
+    });
+    
     if (reportData && reportData.chart_config) {
-      console.log('开始渲染图表');
+      console.log('开始渲染图表, chart_config:', reportData.chart_config);
       
       // 检查是否是多图表类型
       if (reportData.chart_config?.charts && Array.isArray(reportData.chart_config.charts)) {
@@ -158,12 +332,16 @@ const ReportDisplay = ({ reportData, onSave }) => {
         // 多图表类型，不在这里渲染，由 JSX 中的多个 div 处理
       } else if (chartRef.current) {
         // 单图表类型
+        console.log('渲染单图表');
         renderChart();
+      } else {
+        console.log('chartRef.current 不存在');
       }
     } else {
       console.log('无法渲染图表:', {
         hasReportData: !!reportData,
-        hasChartConfig: !!reportData?.chart_config
+        hasChartConfig: !!reportData?.chart_config,
+        chartConfig: reportData?.chart_config
       });
     }
 
@@ -210,10 +388,12 @@ const ReportDisplay = ({ reportData, onSave }) => {
       });
     }
 
-    // Enhance tooltip to show all data fields for bar/line charts
+    // Enhance tooltip to show all data fields for bar/line/scatter charts
     if (chartConfig.tooltip && reportData.metadata?.columns) {
       const columns = reportData.metadata.columns;
-      if (chartConfig.series && chartConfig.series[0]?.type === 'bar' || chartConfig.series[0]?.type === 'line') {
+      const chartType = chartConfig.series && chartConfig.series[0]?.type;
+      
+      if (chartType === 'bar' || chartType === 'line') {
         chartConfig.tooltip.formatter = function (params) {
           if (Array.isArray(params)) {
             params = params[0];
@@ -233,6 +413,27 @@ const ReportDisplay = ({ reportData, onSave }) => {
 
           return result;
         };
+      } else if (chartType === 'scatter') {
+        chartConfig.tooltip.formatter = function (params) {
+          if (Array.isArray(params)) {
+            params = params[0];
+          }
+
+          // 显示name（如专业名称）
+          let result = params.data.name ? `<strong>${params.data.name}</strong><br/>` : '';
+
+          // 显示所有列的数据
+          columns.forEach(col => {
+            if (params.data && params.data[col] !== undefined) {
+              const value = params.data[col];
+              // Format numbers to 2 decimal places
+              const displayValue = typeof value === 'number' ? value.toFixed(2) : value;
+              result += `${col}: ${displayValue}<br/>`;
+            }
+          });
+
+          return result;
+        };
       }
     }
 
@@ -240,6 +441,84 @@ const ReportDisplay = ({ reportData, onSave }) => {
     if (chartConfig.xAxis && typeof chartConfig.xAxis.data === 'string' &&
       chartConfig.xAxis.data.includes('DATA_PLACEHOLDER')) {
       chartConfig.xAxis.data = extractXAxisData();
+    }
+
+    // Handle radar chart indicator
+    if (chartConfig.radar && reportData.data && reportData.data.length > 0) {
+      const columns = reportData.metadata?.columns || Object.keys(reportData.data[0]);
+      const numericColumns = columns.filter(col => {
+        const firstValue = reportData.data[0][col];
+        return typeof firstValue === 'number';
+      });
+      
+      // 如果radar.indicator是占位符或未定义，自动生成
+      if (!chartConfig.radar.indicator || 
+          (typeof chartConfig.radar.indicator === 'string' && 
+           chartConfig.radar.indicator.includes('DATA_PLACEHOLDER'))) {
+        
+        // 计算每列的统计信息
+        const columnStats = numericColumns.map(col => {
+          // 过滤掉null、undefined和NaN值
+          const values = reportData.data
+            .map(row => row[col])
+            .filter(val => val !== null && val !== undefined && !isNaN(val));
+          
+          if (values.length === 0) {
+            return { col, minValue: 0, maxValue: 100, range: 100 };
+          }
+          
+          const minValue = Math.min(...values);
+          const maxValue = Math.max(...values);
+          return { col, minValue, maxValue, range: maxValue - minValue };
+        });
+        
+        // 检查是否需要归一化（不同列的数值范围差异很大）
+        const ranges = columnStats.map(s => s.range);
+        const maxRange = Math.max(...ranges);
+        const minRange = Math.min(...ranges.filter(r => r > 0));
+        const needsNormalization = maxRange / minRange > 10; // 差异超过10倍
+        
+        console.log(`ReportDisplay: 雷达图列统计:`, columnStats, `需要归一化: ${needsNormalization}`);
+        
+        if (needsNormalization) {
+          // 归一化处理：将所有维度映射到0-100范围
+          chartConfig.radar.indicator = columnStats.map(stat => ({
+            name: `${stat.col}\n(${stat.minValue.toFixed(1)}-${stat.maxValue.toFixed(1)})`,
+            max: 100
+          }));
+          
+          // 更新series数据，进行归一化
+          chartConfig.series = chartConfig.series.map(series => {
+            if (series.type === 'radar' && Array.isArray(series.data)) {
+              series.data = series.data.map(item => {
+                const normalizedValue = item.value.map((val, idx) => {
+                  // 处理null值
+                  if (val === null || val === undefined || isNaN(val)) {
+                    return 0; // null值显示为0
+                  }
+                  const stat = columnStats[idx];
+                  if (stat.range === 0) return 50; // 避免除以0
+                  return ((val - stat.minValue) / stat.range) * 100;
+                });
+                return {
+                  ...item,
+                  value: normalizedValue,
+                  originalValue: item.value  // 保留原始值用于tooltip
+                };
+              });
+            }
+            return series;
+          });
+          
+          console.log(`ReportDisplay: 雷达图数据已归一化`);
+        } else {
+          // 不需要归一化，使用原始max值
+          chartConfig.radar.indicator = columnStats.map(stat => ({
+            name: stat.col,
+            max: stat.maxValue * 1.2  // 留20%余量
+          }));
+        }
+      }
     }
 
     console.log('渲染图表配置:', chartConfig);
@@ -277,10 +556,12 @@ const ReportDisplay = ({ reportData, onSave }) => {
   const extractDataForSeries = (series, chartConfig) => {
     // Extract data for a series based on chart type and data structure
     if (!reportData.data || reportData.data.length === 0) {
+      console.warn('ReportDisplay: 数据为空');
       return [];
     }
 
     const columns = reportData.metadata?.columns || Object.keys(reportData.data[0]);
+    console.log(`ReportDisplay: 提取数据 - 图表类型=${series.type}, 列=${columns}`);
 
     // For bar/line charts: return objects with value and all other data
     if (series.type === 'bar' || series.type === 'line') {
@@ -324,8 +605,84 @@ const ReportDisplay = ({ reportData, onSave }) => {
     // For scatter charts: extract x-y pairs
     if (series.type === 'scatter') {
       if (columns.length >= 2) {
-        return reportData.data.map(row => [row[columns[0]], row[columns[1]]]);
+        // 找出所有数值列
+        const numericColumns = columns.filter(col => {
+          const firstValue = reportData.data[0][col];
+          return typeof firstValue === 'number';
+        });
+        
+        // 找出第一个非数值列作为name（如专业名称）
+        const nameColumn = columns.find(col => {
+          const firstValue = reportData.data[0][col];
+          return typeof firstValue !== 'number';
+        });
+        
+        console.log(`ReportDisplay: 散点图 - 所有列=${columns}, 数值列=${numericColumns}, name列=${nameColumn}`);
+        
+        // 如果有至少2个数值列，使用它们
+        if (numericColumns.length >= 2) {
+          const xCol = numericColumns[0];
+          const yCol = numericColumns[1];
+          const scatterData = reportData.data.map(row => {
+            const dataPoint = {
+              value: [row[xCol], row[yCol]],
+              // 如果有name列，添加name属性
+              ...(nameColumn ? { name: row[nameColumn] } : {}),
+              // 保留所有原始数据用于tooltip
+              ...row
+            };
+            return dataPoint;
+          });
+          console.log(`ReportDisplay: 散点图数据 - 列[${xCol}, ${yCol}], name=${nameColumn}`, scatterData);
+          return scatterData;
+        }
+        
+        // 否则使用前两列
+        const scatterData = reportData.data.map(row => {
+          const dataPoint = {
+            value: [row[columns[0]], row[columns[1]]],
+            ...(nameColumn ? { name: row[nameColumn] } : {}),
+            ...row
+          };
+          return dataPoint;
+        });
+        console.log(`ReportDisplay: 散点图数据（默认） - 列[${columns[0]}, ${columns[1]}], name=${nameColumn}`, scatterData);
+        return scatterData;
       }
+    }
+
+    // For radar charts
+    if (series.type === 'radar') {
+      // 找出所有数值列
+      const numericColumns = columns.filter(col => {
+        const firstValue = reportData.data[0][col];
+        return typeof firstValue === 'number';
+      });
+      
+      // 找出第一个非数值列作为name
+      const nameColumn = columns.find(col => {
+        const firstValue = reportData.data[0][col];
+        return typeof firstValue !== 'number';
+      });
+      
+      console.log(`ReportDisplay: 雷达图 - 所有列=${columns}, 数值列=${numericColumns}, name列=${nameColumn}`);
+      
+      // 雷达图数据：每行是一个数据项，包含多个维度的值
+      const radarData = reportData.data.map((row, rowIdx) => {
+        const values = numericColumns.map(col => {
+          const val = row[col];
+          console.log(`ReportDisplay: 雷达图提取 - 行${rowIdx}, 列${col}, 值=${val}, 类型=${typeof val}`);
+          return val;
+        });
+        return {
+          value: values,
+          name: nameColumn ? row[nameColumn] : '',
+          ...row  // 保留所有原始数据
+        };
+      });
+      
+      console.log(`ReportDisplay: 雷达图数据`, radarData);
+      return radarData;
     }
 
     // Default: return the second column values
@@ -363,6 +720,7 @@ const ReportDisplay = ({ reportData, onSave }) => {
         onSave();
       }
     } catch (error) {
+      // 显示后端返回的错误信息
       showError('保存报表失败', error.message);
     } finally {
       setSaving(false);
@@ -452,7 +810,18 @@ const ReportDisplay = ({ reportData, onSave }) => {
           <Space>
             <Button
               icon={<SaveOutlined />}
-              onClick={() => setSaveModalVisible(true)}
+              onClick={() => {
+                // 设置默认值
+                // 报表名称：使用 chart_config.title.text
+                const defaultName = reportData.chart_config?.title?.text || reportData.original_query || '未命名报表';
+                setReportName(defaultName);
+                
+                // 报表描述：使用 summary
+                const defaultDescription = reportData.summary || '';
+                setReportDescription(defaultDescription);
+                
+                setSaveModalVisible(true);
+              }}
             >
               保存为常用报表
             </Button>
