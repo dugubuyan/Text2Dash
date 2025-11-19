@@ -14,6 +14,7 @@ class SensitiveRule(Base, TimestampMixin):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     mode = Column(String(20), nullable=False)  # filter or mask
+    table_name = Column(String(255), nullable=True)  # 表名
     columns = Column(Text, nullable=False)  # JSON array
     pattern = Column(Text, nullable=True)
 

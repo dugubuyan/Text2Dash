@@ -25,6 +25,7 @@ class CreateSensitiveRuleRequest(BaseModel):
     name: str = Field(..., description="规则名称")
     description: Optional[str] = Field(None, description="规则描述")
     mode: str = Field(..., description="处理模式（filter或mask）")
+    table_name: Optional[str] = Field(None, description="表名")
     columns: List[str] = Field(..., description="列名列表")
     pattern: Optional[str] = Field(None, description="匹配模式")
 
@@ -35,6 +36,7 @@ class UpdateSensitiveRuleRequest(BaseModel):
     name: Optional[str] = Field(None, description="规则名称")
     description: Optional[str] = Field(None, description="规则描述")
     mode: Optional[str] = Field(None, description="处理模式")
+    table_name: Optional[str] = Field(None, description="表名")
     columns: Optional[List[str]] = Field(None, description="列名列表")
     pattern: Optional[str] = Field(None, description="匹配模式")
 
@@ -53,6 +55,7 @@ class SensitiveRuleResponse(BaseModel):
     name: str
     description: Optional[str]
     mode: str
+    table_name: Optional[str]
     columns: List[str]
     pattern: Optional[str]
     created_at: str
@@ -62,8 +65,8 @@ class SensitiveRuleResponse(BaseModel):
 class ParsedRuleResponse(BaseModel):
     """解析后的规则响应"""
     name: str
-    description: Optional[str]
     mode: str
+    table_name: Optional[str]
     columns: List[str]
     pattern: Optional[str]
 
@@ -88,6 +91,7 @@ async def create_sensitive_rule(request: CreateSensitiveRuleRequest):
             name=request.name,
             description=request.description,
             mode=request.mode,
+            table_name=request.table_name,
             columns=json.dumps(request.columns, ensure_ascii=False),
             pattern=request.pattern
         )
@@ -103,6 +107,7 @@ async def create_sensitive_rule(request: CreateSensitiveRuleRequest):
                 name=rule.name,
                 description=rule.description,
                 mode=rule.mode,
+                table_name=rule.table_name,
                 columns=json.loads(rule.columns),
                 pattern=rule.pattern,
                 created_at=to_iso_string(rule.created_at),
@@ -148,6 +153,7 @@ async def get_sensitive_rules(db_config_id: Optional[str] = None):
                     name=rule.name,
                     description=rule.description,
                     mode=rule.mode,
+                    table_name=rule.table_name,
                     columns=json.loads(rule.columns),
                     pattern=rule.pattern,
                     created_at=to_iso_string(rule.created_at),
@@ -195,6 +201,8 @@ async def update_sensitive_rule(rule_id: str, request: UpdateSensitiveRuleReques
                 rule.description = request.description
             if request.mode is not None:
                 rule.mode = request.mode
+            if request.table_name is not None:
+                rule.table_name = request.table_name
             if request.columns is not None:
                 rule.columns = json.dumps(request.columns, ensure_ascii=False)
             if request.pattern is not None:
@@ -209,6 +217,7 @@ async def update_sensitive_rule(rule_id: str, request: UpdateSensitiveRuleReques
                 name=rule.name,
                 description=rule.description,
                 mode=rule.mode,
+                table_name=rule.table_name,
                 columns=json.loads(rule.columns),
                 pattern=rule.pattern,
                 created_at=to_iso_string(rule.created_at),
@@ -263,12 +272,12 @@ async def delete_sensitive_rule(rule_id: str):
         )
 
 
-@router.post("/parse", response_model=ParsedRuleResponse, status_code=status.HTTP_200_OK)
+@router.post("/parse", response_model=List[ParsedRuleResponse], status_code=status.HTTP_200_OK)
 async def parse_sensitive_rule(request: ParseRuleRequest):
     """
     自然语言解析规则
     
-    将自然语言描述转换为结构化的敏感信息规则
+    将自然语言描述转换为结构化的敏感信息规则（可能返回多个规则）
     """
     try:
         logger.info(f"收到解析敏感信息规则请求: text='{request.natural_language[:50]}...', db_config_id={request.db_config_id}")
@@ -278,27 +287,30 @@ async def parse_sensitive_rule(request: ParseRuleRequest):
         if request.db_config_id:
             from ..services.database_connector import get_database_connector
             db_connector = get_database_connector()
-            db_schema_info = await db_connector.get_schema(request.db_config_id)
+            db_schema_info = await db_connector.get_schema_info(request.db_config_id)
             logger.info(f"获取数据库schema信息: db_config_id={request.db_config_id}")
         
         llm_service = LLMService()
         
-        # 调用LLM解析规则
-        parsed_rule = await llm_service.parse_sensitive_rule(
+        # 调用LLM解析规则（现在返回列表）
+        parsed_rules = await llm_service.parse_sensitive_rule(
             natural_language=request.natural_language,
             db_schema_info=db_schema_info,
             model=request.model
         )
         
-        response = ParsedRuleResponse(
-            name=parsed_rule.name,
-            description=parsed_rule.description,
-            mode=parsed_rule.mode,
-            columns=parsed_rule.columns,
-            pattern=parsed_rule.pattern
-        )
+        response = [
+            ParsedRuleResponse(
+                name=rule.name,
+                mode=rule.mode,
+                table_name=rule.table_name,
+                columns=rule.columns,
+                pattern=rule.pattern
+            )
+            for rule in parsed_rules
+        ]
         
-        logger.info(f"敏感信息规则解析成功: name={parsed_rule.name}, mode={parsed_rule.mode}")
+        logger.info(f"敏感信息规则解析成功: count={len(response)}")
         return response
         
     except Exception as e:

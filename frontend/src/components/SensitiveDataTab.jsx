@@ -33,13 +33,21 @@ const SensitiveDataTab = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
   const [parsing, setParsing] = useState(false);
-  const [parsedRule, setParsedRule] = useState(null);
+  const [parsedRules, setParsedRules] = useState([]);
+  const [selectedParsedRule, setSelectedParsedRule] = useState(null);
   const [form] = Form.useForm();
 
   useEffect(() => {
     loadRules();
     loadDatabases();
   }, []);
+
+  useEffect(() => {
+    // Auto-select database if only one exists
+    if (databases.length === 1 && !form.getFieldValue('db_config_id')) {
+      form.setFieldsValue({ db_config_id: databases[0].id });
+    }
+  }, [databases, form]);
 
   const loadRules = async () => {
     try {
@@ -64,14 +72,22 @@ const SensitiveDataTab = () => {
 
   const handleCreate = () => {
     setEditingRule(null);
-    setParsedRule(null);
+    setParsedRules([]);
+    setSelectedParsedRule(null);
     form.resetFields();
+    
+    // Auto-select database if only one exists
+    if (databases.length === 1) {
+      form.setFieldsValue({ db_config_id: databases[0].id });
+    }
+    
     setModalVisible(true);
   };
 
   const handleEdit = (record) => {
     setEditingRule(record);
-    setParsedRule(null);
+    setParsedRules([]);
+    setSelectedParsedRule(null);
     form.setFieldsValue({
       name: record.name,
       description: record.description,
@@ -106,32 +122,69 @@ const SensitiveDataTab = () => {
 
       setParsing(true);
       const response = await sensitiveRuleService.parseRule(description, dbConfigId);
-      const parsed = response.data;
+      const parsedArray = response.data;
       
-      setParsedRule(parsed);
+      setParsedRules(parsedArray);
       
-      // Auto-fill form with parsed values
-      const columnsValue = Array.isArray(parsed.columns) 
-        ? parsed.columns.join(', ') 
-        : parsed.columns;
-      
-      form.setFieldsValue({
-        name: parsed.name || form.getFieldValue('name'),
-        mode: parsed.mode,
-        columns: columnsValue,
-        pattern: parsed.pattern,
-      });
-      
-      // Show different message based on whether columns were detected
-      if (!columnsValue || columnsValue.trim() === '') {
-        showSuccess('规则解析成功，请手动选择应用列');
-      } else {
+      // If only one rule, auto-select it
+      if (parsedArray.length === 1) {
+        handleSelectParsedRule(parsedArray[0]);
         showSuccess('规则解析成功');
+      } else if (parsedArray.length > 1) {
+        showSuccess(`解析成功，识别到 ${parsedArray.length} 条规则`);
       }
     } catch (error) {
       showError('解析失败', error.message);
     } finally {
       setParsing(false);
+    }
+  };
+
+  const handleSelectParsedRule = (parsed) => {
+    setSelectedParsedRule(parsed);
+    
+    // Auto-fill form with parsed values
+    const columnsValue = Array.isArray(parsed.columns) 
+      ? parsed.columns.join(', ') 
+      : parsed.columns;
+    
+    // Preserve db_config_id when filling form
+    const currentDbConfigId = form.getFieldValue('db_config_id');
+    
+    form.setFieldsValue({
+      name: parsed.name || form.getFieldValue('name'),
+      mode: parsed.mode,
+      columns: columnsValue,
+      pattern: parsed.pattern,
+      db_config_id: currentDbConfigId, // Keep the selected database
+    });
+  };
+
+  const handleBatchCreateParsedRules = async () => {
+    try {
+      const dbConfigId = form.getFieldValue('db_config_id');
+      
+      // Create all parsed rules
+      for (const rule of parsedRules) {
+        const ruleData = {
+          db_config_id: dbConfigId,
+          name: rule.name,
+          mode: rule.mode,
+          table_name: rule.table_name,
+          columns: rule.columns,
+          pattern: rule.pattern,
+        };
+        await sensitiveRuleService.createRule(ruleData);
+      }
+      
+      showSuccess(`成功创建 ${parsedRules.length} 条规则`);
+      setModalVisible(false);
+      form.resetFields();
+      setParsedRules([]);
+      setSelectedParsedRule(null);
+      loadRules();
+    } catch (error) {
+      showError('批量创建失败', error.message);
     }
   };
 
@@ -162,7 +215,8 @@ const SensitiveDataTab = () => {
       
       setModalVisible(false);
       form.resetFields();
-      setParsedRule(null);
+      setParsedRules([]);
+      setSelectedParsedRule(null);
       loadRules();
     } catch (error) {
       if (error.errorFields) {
@@ -183,12 +237,6 @@ const SensitiveDataTab = () => {
       key: 'name',
     },
     {
-      title: '描述',
-      dataIndex: 'description',
-      key: 'description',
-      ellipsis: true,
-    },
-    {
       title: '处理模式',
       dataIndex: 'mode',
       key: 'mode',
@@ -200,6 +248,12 @@ const SensitiveDataTab = () => {
         const { color, text } = config[mode] || { color: 'default', text: mode };
         return <Tag color={color}>{text}</Tag>;
       },
+    },
+    {
+      title: '表名',
+      dataIndex: 'table_name',
+      key: 'table_name',
+      render: (tableName) => tableName || '-',
     },
     {
       title: '应用列',
@@ -261,119 +315,209 @@ const SensitiveDataTab = () => {
       />
 
       <Modal
-        title={editingRule ? '编辑敏感信息规则' : '添加敏感信息规则'}
+        title={
+          editingRule 
+            ? '编辑敏感信息规则' 
+            : parsedRules.length > 0 
+              ? '确认敏感信息规则' 
+              : '添加敏感信息规则'
+        }
         open={modalVisible}
         onOk={handleSubmit}
         onCancel={() => {
           setModalVisible(false);
           form.resetFields();
-          setParsedRule(null);
+          setParsedRules([]);
+          setSelectedParsedRule(null);
         }}
-        okText="保存"
+        okText={selectedParsedRule && !editingRule ? "确认创建" : "保存"}
         cancelText="取消"
         width={700}
+        okButtonProps={{
+          disabled: !editingRule && parsedRules.length === 0 && !selectedParsedRule
+        }}
       >
         <Form
           form={form}
           layout="vertical"
           initialValues={{ mode: 'mask' }}
         >
-          <Form.Item
-            name="name"
-            label="规则名称"
-            rules={[{ required: true, message: '请输入规则名称' }]}
-          >
-            <Input placeholder="例如：过滤身份证号" />
-          </Form.Item>
+          {!editingRule && parsedRules.length === 0 && (
+            <>
+              <Form.Item
+                name="description"
+                label="规则描述（自然语言）"
+                extra="描述需要脱敏的数据类型，系统会自动识别相关字段并生成规则。支持一次识别多种类型。"
+              >
+                <TextArea
+                  rows={3}
+                  placeholder="例如：手机号和邮箱脱敏"
+                />
+              </Form.Item>
 
-          <Form.Item
-            name="description"
-            label="规则描述（自然语言）"
-            extra="使用自然语言描述规则，然后点击下方按钮自动解析"
-          >
-            <TextArea
-              rows={3}
-              placeholder="例如：对所有包含身份证号和手机号的列进行脱敏处理"
-            />
-          </Form.Item>
-
-          <Form.Item>
-            <Button
-              icon={<ThunderboltOutlined />}
-              onClick={handleParseNaturalLanguage}
-              loading={parsing}
-              block
-            >
-              智能解析规则
-            </Button>
-          </Form.Item>
-
-          {parsedRule && (
-            <Alert
-              message="解析成功"
-              description={
-                !parsedRule.columns || parsedRule.columns.length === 0
-                  ? "已自动填充部分字段。由于描述较为通用，无法自动推断列名，请手动输入需要应用的列名。"
-                  : "已自动填充下方字段，请检查并确认"
-              }
-              type={
-                !parsedRule.columns || parsedRule.columns.length === 0
-                  ? "warning"
-                  : "success"
-              }
-              showIcon
-              style={{ marginBottom: 16 }}
-            />
+              <Form.Item>
+                <Button
+                  icon={<ThunderboltOutlined />}
+                  onClick={handleParseNaturalLanguage}
+                  loading={parsing}
+                  block
+                >
+                  智能解析规则
+                </Button>
+              </Form.Item>
+            </>
           )}
 
-          <Form.Item
-            name="db_config_id"
-            label="应用到数据库"
-            extra="选择此规则应用的数据库配置（可选）"
-          >
-            <Select
-              placeholder="选择数据库配置"
-              allowClear
+          {(editingRule || selectedParsedRule) && (
+            <Form.Item
+              name="name"
+              label="规则名称"
+              rules={[{ required: true, message: '请输入规则名称' }]}
             >
-              {databases.map(db => (
-                <Select.Option key={db.id} value={db.id}>
-                  {db.name}
-                </Select.Option>
-              ))}
-            </Select>
-          </Form.Item>
+              <Input 
+                placeholder="例如：过滤身份证号" 
+                disabled={!!selectedParsedRule && !editingRule}
+              />
+            </Form.Item>
+          )}
 
-          <Form.Item
-            name="mode"
-            label="处理模式"
-            rules={[{ required: true, message: '请选择处理模式' }]}
-          >
-            <Select>
-              <Select.Option value="filter">
-                完全过滤（移除列）
-              </Select.Option>
-              <Select.Option value="mask">
-                脱敏处理（使用***替换）
-              </Select.Option>
-            </Select>
-          </Form.Item>
+          {parsedRules.length > 0 && (
+            <Card 
+              title={`解析结果（${parsedRules.length} 条规则）`}
+              size="small"
+              style={{ marginBottom: 16 }}
+              extra={
+                parsedRules.length > 1 && (
+                  <Button 
+                    type="primary" 
+                    size="small"
+                    onClick={handleBatchCreateParsedRules}
+                  >
+                    一键创建全部
+                  </Button>
+                )
+              }
+            >
+              <Space direction="vertical" style={{ width: '100%' }}>
+                {parsedRules.map((rule, index) => (
+                  <Card
+                    key={index}
+                    size="small"
+                    hoverable
+                    style={{
+                      cursor: 'pointer',
+                      border: selectedParsedRule === rule ? '2px solid #1890ff' : '1px solid #d9d9d9',
+                    }}
+                    onClick={() => handleSelectParsedRule(rule)}
+                  >
+                    <Space direction="vertical" style={{ width: '100%' }}>
+                      <div>
+                        <Text strong>{rule.name}</Text>
+                        {selectedParsedRule === rule && (
+                          <Tag color="blue" style={{ marginLeft: 8 }}>已选择</Tag>
+                        )}
+                      </div>
+                      <Space wrap>
+                        <Tag color={rule.mode === 'filter' ? 'red' : 'orange'}>
+                          {rule.mode === 'filter' ? '完全过滤' : '脱敏处理'}
+                        </Tag>
+                        {rule.table_name && (
+                          <>
+                            <Text type="secondary" style={{ fontSize: '12px' }}>表：</Text>
+                            <Tag color="blue" style={{ fontSize: '11px' }}>{rule.table_name}</Tag>
+                          </>
+                        )}
+                        {rule.columns && rule.columns.length > 0 && (
+                          <>
+                            <Text type="secondary" style={{ fontSize: '12px' }}>列：</Text>
+                            {rule.columns.map((col, idx) => (
+                              <Tag key={idx} style={{ fontSize: '11px' }}>{col}</Tag>
+                            ))}
+                          </>
+                        )}
+                      </Space>
+                    </Space>
+                  </Card>
+                ))}
+                {parsedRules.length > 1 && (
+                  <Alert
+                    message={`识别到 ${parsedRules.length} 条规则`}
+                    description="可以点击上方「一键创建全部」按钮批量创建，或点击单个规则卡片查看详情后单独保存"
+                    type="info"
+                    showIcon
+                  />
+                )}
+                {parsedRules.length === 1 && (
+                  <Alert
+                    message="已自动选择该规则"
+                    description="请确认规则信息后点击「确认创建」按钮"
+                    type="success"
+                    showIcon
+                  />
+                )}
+              </Space>
+            </Card>
+          )}
 
-          <Form.Item
-            name="columns"
-            label="应用列"
-            rules={[{ required: true, message: '请输入列名' }]}
-            extra="多个列名用逗号分隔，例如：id_card, phone, email"
-          >
-            <Input placeholder="id_card, phone" />
-          </Form.Item>
+          {(editingRule || selectedParsedRule) && (
+            <>
+              <Form.Item
+                name="db_config_id"
+                label="应用到数据库"
+                extra={databases.length === 1 ? "已自动选择唯一的数据库" : "选择此规则应用的数据库配置（可选）"}
+              >
+                <Select
+                  placeholder="选择数据库配置"
+                  allowClear
+                  disabled={databases.length === 1 || (!!selectedParsedRule && !editingRule)}
+                >
+                  {databases.map(db => (
+                    <Select.Option key={db.id} value={db.id}>
+                      {db.name}
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
 
-          <Form.Item
-            name="pattern"
-            label="匹配模式（可选）"
-            extra="正则表达式，用于匹配特定格式的数据"
-          >
-            <Input placeholder="例如：^\d{18}$ 匹配18位数字" />
-          </Form.Item>
+              <Form.Item
+                name="mode"
+                label="处理模式"
+                rules={[{ required: true, message: '请选择处理模式' }]}
+              >
+                <Select disabled={!!selectedParsedRule && !editingRule}>
+                  <Select.Option value="filter">
+                    完全过滤（移除列）
+                  </Select.Option>
+                  <Select.Option value="mask">
+                    脱敏处理（使用***替换）
+                  </Select.Option>
+                </Select>
+              </Form.Item>
+
+              <Form.Item
+                name="columns"
+                label="应用列"
+                rules={[{ required: true, message: '请输入列名' }]}
+                extra={selectedParsedRule && !editingRule ? "由AI自动识别的列名" : "多个列名用逗号分隔，例如：id_card, phone, email"}
+              >
+                <Input 
+                  placeholder="id_card, phone" 
+                  disabled={!!selectedParsedRule && !editingRule}
+                />
+              </Form.Item>
+
+              <Form.Item
+                name="pattern"
+                label="匹配模式（可选）"
+                extra={selectedParsedRule && !editingRule ? "脱敏模式" : "正则表达式，用于匹配特定格式的数据"}
+              >
+                <Input 
+                  placeholder="例如：phone, id_card" 
+                  disabled={!!selectedParsedRule && !editingRule}
+                />
+              </Form.Item>
+            </>
+          )}
         </Form>
       </Modal>
     </div>

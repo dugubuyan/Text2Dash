@@ -971,6 +971,13 @@ class LLMService:
         
         logger.info(f"解析敏感信息规则: '{natural_language[:50]}...', has_schema={db_schema_info is not None}")
         
+        # Log schema info for debugging
+        if db_schema_info:
+            logger.info(f"Schema info type: {type(db_schema_info)}")
+            logger.info(f"Schema info content: {db_schema_info}")
+            if hasattr(db_schema_info, 'tables'):
+                logger.info(f"Schema tables: {db_schema_info.tables}")
+        
         system_prompt = self._build_sensitive_rule_system_prompt(available_columns, db_schema_info)
         
         messages = [
@@ -989,29 +996,49 @@ class LLMService:
                 response_format={"type": "json_object"}
             )
             
+            logger.info(f"LLM原始响应:{'=' * 60}\n{response}\n{'=' * 60}")
+            
             result = json.loads(response)
+            logger.info(f"解析后的JSON结果: {json.dumps(result, ensure_ascii=False, indent=2)}")
             
-            # Handle case where LLM returns a list instead of dict
+            # Handle case where LLM returns a list of rules
             if isinstance(result, list):
-                if len(result) > 0:
-                    result = result[0]
-                else:
+                if len(result) == 0:
                     raise Exception("LLM返回空列表")
-            
-            sensitive_rule = SensitiveRule(
-                name=result.get("name", "未命名规则"),
-                description=result.get("description", natural_language),
-                mode=result.get("mode", "mask"),
-                columns=result.get("columns", []),
-                pattern=result.get("pattern")
-            )
-            
-            logger.info(
-                f"敏感规则解析成功: name={sensitive_rule.name}, "
-                f"mode={sensitive_rule.mode}, columns={sensitive_rule.columns}"
-            )
-            
-            return sensitive_rule
+                
+                # Convert all rules in the list
+                sensitive_rules = []
+                for rule_data in result:
+                    rule = SensitiveRule(
+                        name=rule_data.get("name", "未命名规则"),
+                        mode=rule_data.get("mode", "mask"),
+                        table_name=rule_data.get("table_name"),
+                        columns=rule_data.get("columns", []),
+                        pattern=rule_data.get("pattern")
+                    )
+                    sensitive_rules.append(rule)
+                    logger.info(
+                        f"敏感规则解析成功: name={rule.name}, "
+                        f"mode={rule.mode}, columns={rule.columns}"
+                    )
+                
+                return sensitive_rules
+            else:
+                # Single rule returned
+                sensitive_rule = SensitiveRule(
+                    name=result.get("name", "未命名规则"),
+                    mode=result.get("mode", "mask"),
+                    table_name=result.get("table_name"),
+                    columns=result.get("columns", []),
+                    pattern=result.get("pattern")
+                )
+                
+                logger.info(
+                    f"敏感规则解析成功: name={sensitive_rule.name}, "
+                    f"mode={sensitive_rule.mode}, columns={sensitive_rule.columns}"
+                )
+                
+                return [sensitive_rule]
             
         except json.JSONDecodeError as e:
             logger.error(f"解析LLM响应失败: {e}", exc_info=True)
@@ -1027,137 +1054,106 @@ class LLMService:
         db_schema_info: Dict[str, Any] = None
     ) -> str:
         """构建敏感规则解析的系统提示"""
-        prompt = """你是数据安全专家，将自然语言转换为敏感信息过滤规则。
+        
+        has_schema = False
+        if db_schema_info:
+            tables = db_schema_info.tables if hasattr(db_schema_info, 'tables') else {}
+            has_schema = bool(tables)
+        
+        if has_schema:
+            # 有数据库schema时的提示词
+            prompt = """你是数据安全专家。根据用户输入和数据库结构，识别哪些列需要脱敏或过滤。
 
-处理模式：
-- filter: 完全移除列
-- mask: 脱敏处理
+## 数据库结构
 
 """
-        
-        # 优先使用db_schema_info
-        if db_schema_info:
-            prompt += "## 数据库结构信息\n\n"
+            for table_name, columns in tables.items():
+                column_info = []
+                for col in columns:
+                    col_name = col['name']
+                    col_type = col.get('type', 'UNKNOWN')
+                    column_info.append(f"{col_name} ({col_type})")
+                prompt += f"表 {table_name}: {', '.join(column_info)}\n"
             
-            # 如果有schema描述文件，使用描述文件内容
-            if 'schema_description' in db_schema_info:
-                prompt += "数据库详细描述：\n"
-                prompt += db_schema_info['schema_description']
-                prompt += "\n\n"
-            else:
-                # 否则使用表结构信息
-                tables = db_schema_info.get('tables', {})
-                if tables:
-                    prompt += "数据库表和字段：\n"
-                    for table_name, columns in tables.items():
-                        column_info = []
-                        for col in columns:
-                            col_name = col['name']
-                            col_type = col.get('type', 'UNKNOWN')
-                            column_info.append(f"{col_name} ({col_type})")
-                        prompt += f"  - {table_name}: {', '.join(column_info)}\n"
-                    prompt += "\n"
-        elif available_columns:
-            prompt += f"可用列名：{', '.join(available_columns)}\n\n"
-        
-        prompt += """返回JSON格式：
+            prompt += """
+## 任务
 
-{
-  "name": "规则名称",
-  "description": "规则描述",
-  "mode": "filter 或 mask",
-  "columns": ["列名1", "列名2"],
-  "pattern": "脱敏模式（mask模式时需要）"
-}
+根据用户的描述，从上述数据库字段中选择需要处理的列。返回JSON数组，每种敏感信息类型一个规则。
 
-## 脱敏模式
+## 返回格式
 
-### 预定义模式：
-- "phone": 手机号，保留前3位和后4位
-- "email": 邮箱，保留首字符和域名
-- "id_card": 身份证，保留前6位和后4位
-- "keep_first_N": 保留前N位
-- "keep_last_N": 保留后N位
+[
+  {
+    "name": "规则名称",
+    "mode": "mask",
+    "table_name": "表名",
+    "columns": ["列名"],
+    "pattern": "phone"
+  }
+]
 
-### 自定义规则（JSON字符串）：
-
-Custom类型：
-{
-  "type": "custom",
-  "keep_start": 3,
-  "keep_end": 4,
-  "mask_char": "*"
-}
-
-Regex类型：
-{
-  "type": "regex",
-  "pattern": "\\\\d",
-  "replacement": "X"
-}
-
-Range类型：
-{
-  "type": "range",
-  "ranges": [[3, 7]],
-  "mask_char": "#"
-}
+- name: 规则名称
+- mode: "filter"（移除列）或 "mask"（脱敏）
+- table_name: 该列所属的表名
+- columns: 该表中需要处理的列名
+- pattern: 脱敏模式（phone, email, id_card等）
 
 ## 示例
 
-"隐藏身份证号和手机号" →
-{
-  "name": "隐藏个人身份信息",
-  "description": "隐藏身份证号和手机号",
-  "mode": "filter",
-  "columns": ["身份证号", "手机号", "id_card", "phone"],
-  "pattern": null
-}
+表 students: student_name (VARCHAR), contact_phone (VARCHAR), email (VARCHAR)
+表 faculty: faculty_name (VARCHAR), office_phone (VARCHAR)
 
-"手机号只显示前3位和后4位" →
-{
-  "name": "手机号脱敏",
-  "description": "手机号只显示前3位和后4位",
-  "mode": "mask",
-  "columns": ["手机号", "phone", "mobile"],
-  "pattern": "phone"
-}
-
-"银行卡号保留前4位和后4位" →
-{
-  "name": "银行卡号脱敏",
-  "description": "银行卡号保留前4位和后4位",
-  "mode": "mask",
-  "columns": ["银行卡号", "card_number", "bank_card"],
-  "pattern": "{\\"type\\": \\"custom\\", \\"keep_start\\": 4, \\"keep_end\\": 4, \\"mask_char\\": \\"*\\"}"
-}
-
-## 重要规则
-
-1. **优先使用数据库schema信息**：
-   - 如果提供了数据库结构信息，必须从实际存在的表和字段中选择
-   - 返回的列名必须是数据库中真实存在的字段名（精确匹配）
-   - 根据字段名称和类型推断是否包含敏感信息
-
-2. **字段识别策略**：
-   - 身份证号：id_card, id_card_number, identity_card, idcard等
-   - 手机号：phone, mobile, phone_number, mobile_number, contact_number等
-   - 邮箱：email, email_address, mail等
-   - 姓名：name, full_name, student_name, faculty_name等
-   - 地址：address, home_address, contact_address等
-   - 银行卡：bank_card, card_number, account_number等
-
-3. **通用规则**：
-   - 识别多种可能的列名（中文、英文、缩写）
-   - 常见场景使用预定义模式
-   - 特殊需求使用自定义规则
-   - filter模式的pattern为null
-   - 自定义规则必须是有效JSON字符串
-
-4. **无schema信息时**：
-   - 如果没有提供数据库schema，返回通用的列名建议
-   - 在columns中包含多种可能的列名变体
+用户输入："手机号和邮箱脱敏"
+返回：
+[
+  {"name": "学生手机号脱敏", "mode": "mask", "table_name": "students", "columns": ["contact_phone"], "pattern": "phone"},
+  {"name": "学生邮箱脱敏", "mode": "mask", "table_name": "students", "columns": ["email"], "pattern": "email"},
+  {"name": "教师办公电话脱敏", "mode": "mask", "table_name": "faculty", "columns": ["office_phone"], "pattern": "phone"}
+]
 """
+            logger.info(f"使用数据库schema构建提示词: {len(tables)} 个表")
+        else:
+            # 无数据库schema时的提示词
+            prompt = """你是数据安全专家。根据用户输入，生成敏感信息处理规则。
+
+## 任务
+
+根据用户描述生成规则，返回JSON数组，每种敏感信息类型一个规则。
+
+## 返回格式
+
+[
+  {
+    "name": "规则名称",
+    "description": "规则描述",
+    "mode": "mask",
+    "columns": ["可能的列名1", "可能的列名2"],
+    "pattern": "phone"
+  }
+]
+
+- mode: "filter"（移除列）或 "mask"（脱敏）
+- columns: 该类型敏感信息的常见列名（多个变体）
+- pattern: 脱敏模式（phone, email, id_card等）
+
+## 常见列名
+
+- 身份证：id_card, id_card_number, identity_card, idcard
+- 手机号：phone, mobile, phone_number, mobile_number, contact_phone
+- 邮箱：email, email_address, mail
+- 姓名：name, full_name, user_name
+- 地址：address, home_address, contact_address
+
+## 示例
+
+用户输入："身份证和手机号脱敏"
+返回：
+[
+  {"name": "身份证脱敏", "description": "身份证脱敏", "mode": "mask", "columns": ["id_card", "id_card_number", "identity_card"], "pattern": "id_card"},
+  {"name": "手机号脱敏", "description": "手机号脱敏", "mode": "mask", "columns": ["phone", "mobile", "phone_number", "mobile_number"], "pattern": "phone"}
+]
+"""
+            logger.info("使用通用模式构建提示词（无数据库schema）")
         
         return prompt
 

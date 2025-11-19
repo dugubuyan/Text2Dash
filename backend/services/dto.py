@@ -52,6 +52,7 @@ class SensitiveRule(BaseModel):
     name: str
     description: Optional[str] = None
     mode: str  # 'filter' or 'mask'
+    table_name: Optional[str] = None
     columns: List[str]
     pattern: Optional[str] = None
 
