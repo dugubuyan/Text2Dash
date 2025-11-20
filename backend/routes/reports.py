@@ -142,7 +142,8 @@ async def generate_report(request: QueryRequest):
                 "row_count": result.metadata.row_count
             },
             original_query=request.query,
-            data_source_ids=request.data_source_ids
+            data_source_ids=request.data_source_ids,
+            model=request.model
         )
         
         logger.info(f"报表生成成功: interaction_id={result.interaction_id}")

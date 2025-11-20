@@ -8,7 +8,10 @@ const { TextArea } = Input;
 
 const QueryInput = ({ onSubmit, loading = false, sessionId, compact = false }) => {
   const [query, setQuery] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gemini/gemini-2.0-flash');
+  // 从localStorage读取上次选择的模型，如果没有则使用默认值
+  const [selectedModel, setSelectedModel] = useState(() => {
+    return localStorage.getItem('selectedModel') || 'gemini/gemini-2.0-flash';
+  });
   const [selectedDataSources, setSelectedDataSources] = useState([]);
   const [models, setModels] = useState([]);
   const [databases, setDatabases] = useState([]);
@@ -18,6 +21,13 @@ const QueryInput = ({ onSubmit, loading = false, sessionId, compact = false }) =
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  // 当模型选择改变时，保存到localStorage
+  useEffect(() => {
+    if (selectedModel) {
+      localStorage.setItem('selectedModel', selectedModel);
+    }
+  }, [selectedModel]);
 
   const loadInitialData = async () => {
     try {

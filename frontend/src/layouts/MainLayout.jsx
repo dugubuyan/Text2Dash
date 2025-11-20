@@ -39,7 +39,7 @@ const MainLayout = ({ children, onMenuChange }) => {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed}>
+      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} className="no-print">
         <div
           style={{
             height: 32,
@@ -65,6 +65,7 @@ const MainLayout = ({ children, onMenuChange }) => {
       </Sider>
       <Layout>
         <Header
+          className="no-print"
           style={{
             padding: '0 24px',
             background: '#fff',

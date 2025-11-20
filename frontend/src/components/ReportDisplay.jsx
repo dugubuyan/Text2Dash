@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Card, Button, Space, Modal, Input, Typography, Table } from 'antd';
+import { Card, Button, Space, Modal, Input, Typography, Table, Dropdown } from 'antd';
 import {
   SaveOutlined,
   FilePdfOutlined,
   FileExcelOutlined,
   PrinterOutlined,
+  DownloadOutlined,
+  EditOutlined,
 } from '@ant-design/icons';
 import * as echarts from 'echarts';
 import { reportService, exportService } from '../services';
@@ -311,6 +313,8 @@ const ReportDisplay = ({ reportData, onSave }) => {
   const [reportDescription, setReportDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedSummary, setEditedSummary] = useState('');
 
   useEffect(() => {
     console.log('ReportDisplay 收到数据:', reportData);
@@ -730,10 +734,52 @@ const ReportDisplay = ({ reportData, onSave }) => {
   const handleExportPDF = async () => {
     try {
       setExporting(true);
+      
+      // 优先使用图表配置中的标题，其次使用报告总结
+      let title = '数据报表';
+      
+      // 尝试从chart_config中获取标题
+      if (reportData.chart_config?.title?.text) {
+        title = reportData.chart_config.title.text;
+      } else if (reportData.chart_config?.charts?.[0]?.title) {
+        // 多图表情况，使用第一个图表的标题
+        title = reportData.chart_config.charts[0].title;
+      } else if (reportData.summary) {
+        // 如果没有图表标题，使用报告总结
+        title = reportData.summary.length > 50 
+          ? reportData.summary.substring(0, 50) + '...' 
+          : reportData.summary;
+      }
+      
+      // 确保标题不会太长
+      if (title.length > 50) {
+        title = title.substring(0, 50) + '...';
+      }
+      
+      // 将图表转换为图片
+      let chartImage = null;
+      if (chartRef.current) {
+        try {
+          const chartInstance = chartRef.current.getEchartsInstance();
+          // 获取图表的base64图片数据
+          const imageDataUrl = chartInstance.getDataURL({
+            type: 'png',
+            pixelRatio: 2, // 提高清晰度
+            backgroundColor: '#fff'
+          });
+          // 将base64转换为blob
+          const base64Data = imageDataUrl.split(',')[1];
+          chartImage = base64Data;
+        } catch (error) {
+          console.warn('图表转换失败:', error);
+        }
+      }
+      
       const response = await exportService.exportToPDF({
-        title: reportData.original_query || '报表',
-        summary: reportData.summary || '',
+        title: title,
+        summary: editedSummary || reportData.summary || '',
         chart_config: reportData.chart_config,
+        chart_image: chartImage,
         data: reportData.data,
         metadata: reportData.metadata,
         sql_query: reportData.sql_query || null,
@@ -764,7 +810,7 @@ const ReportDisplay = ({ reportData, onSave }) => {
       setExporting(true);
       const response = await exportService.exportToExcel({
         title: reportData.original_query || '报表',
-        summary: reportData.summary || '',
+        summary: editedSummary || reportData.summary || '',
         chart_config: reportData.chart_config,
         data: reportData.data,
         metadata: reportData.metadata,
@@ -794,6 +840,7 @@ const ReportDisplay = ({ reportData, onSave }) => {
   };
 
   const handlePrint = () => {
+    // 使用浏览器打印功能，CSS媒体查询会自动隐藏不需要的元素
     window.print();
   };
 
@@ -825,20 +872,28 @@ const ReportDisplay = ({ reportData, onSave }) => {
             >
               保存为常用报表
             </Button>
-            <Button
-              icon={<FilePdfOutlined />}
-              onClick={handleExportPDF}
-              loading={exporting}
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'pdf',
+                    label: '导出PDF',
+                    icon: <FilePdfOutlined />,
+                    onClick: handleExportPDF,
+                  },
+                  {
+                    key: 'excel',
+                    label: '导出Excel',
+                    icon: <FileExcelOutlined />,
+                    onClick: handleExportExcel,
+                  },
+                ],
+              }}
             >
-              导出PDF
-            </Button>
-            <Button
-              icon={<FileExcelOutlined />}
-              onClick={handleExportExcel}
-              loading={exporting}
-            >
-              导出Excel
-            </Button>
+              <Button icon={<DownloadOutlined />} loading={exporting}>
+                导出
+              </Button>
+            </Dropdown>
             <Button
               icon={<PrinterOutlined />}
               onClick={handlePrint}
@@ -846,15 +901,38 @@ const ReportDisplay = ({ reportData, onSave }) => {
             >
               打印
             </Button>
+            <Button
+              icon={<EditOutlined />}
+              onClick={() => {
+                setIsEditing(!isEditing);
+                if (!isEditing) {
+                  setEditedSummary(reportData.summary || '');
+                }
+              }}
+              type={isEditing ? 'primary' : 'default'}
+              className="no-print"
+            >
+              {isEditing ? '完成编辑' : '编辑'}
+            </Button>
           </Space>
         }
       >
         {reportData.summary && (
           <div style={{ marginBottom: 24 }} className="report-summary">
             <Title level={4}>报告总结</Title>
-            <Paragraph style={{ fontSize: 16, lineHeight: 1.8 }}>
-              {reportData.summary}
-            </Paragraph>
+            {isEditing ? (
+              <TextArea
+                value={editedSummary}
+                onChange={(e) => setEditedSummary(e.target.value)}
+                rows={4}
+                style={{ fontSize: 16, lineHeight: 1.8 }}
+                placeholder="请输入报告总结"
+              />
+            ) : (
+              <Paragraph style={{ fontSize: 16, lineHeight: 1.8 }}>
+                {editedSummary || reportData.summary}
+              </Paragraph>
+            )}
           </div>
         )}
 
@@ -920,7 +998,7 @@ const ReportDisplay = ({ reportData, onSave }) => {
         )}
 
         {reportData.metadata && (
-          <div style={{ marginTop: 24 }} className="report-metadata">
+          <div style={{ marginTop: 24 }} className="report-metadata no-print">
             <Title level={5}>数据信息</Title>
             <Paragraph>
               <strong>数据行数：</strong> {reportData.metadata.row_count}

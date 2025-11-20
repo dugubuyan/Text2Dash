@@ -238,3 +238,121 @@
 .info-state {
   color: #1890ff;
 }
+
+/* 打印样式 */
+@media print {
+  /* 隐藏不需要打印的元素 */
+  .no-print,
+  .ant-layout-sider,
+  .ant-layout-header,
+  .ant-card-extra,
+  .ant-btn,
+  button,
+  .sidebar,
+  .ant-pagination,
+  .ant-table-pagination {
+    display: none !important;
+  }
+
+  /* 重置页面布局 */
+  body,
+  html,
+  #root {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    background: white !important;
+  }
+
+  /* 布局容器 */
+  .ant-layout,
+  .ant-layout-content {
+    padding: 0 !important;
+    margin: 0 !important;
+    background: white !important;
+  }
+
+  /* Row和Col布局 */
+  .ant-row {
+    margin: 0 !important;
+  }
+
+  .ant-col {
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* 报表容器样式 */
+  .report-display {
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .report-display .ant-card-head {
+    display: none !important;
+  }
+
+  .report-display .ant-card-body {
+    padding: 20px !important;
+  }
+
+  /* 确保图表正确显示 */
+  .report-chart,
+  .multiple-charts {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    width: 100% !important;
+  }
+
+  /* 表格样式优化 */
+  .report-data-table {
+    page-break-inside: auto;
+  }
+
+  .report-data-table table {
+    page-break-inside: auto;
+    width: 100% !important;
+  }
+
+  .report-data-table tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  .report-data-table .ant-table-wrapper {
+    overflow: visible !important;
+  }
+
+  /* 报表总结样式 */
+  .report-summary {
+    page-break-after: avoid;
+    margin-bottom: 20px !important;
+  }
+
+  /* 隐藏卡片边框和阴影 */
+  .ant-card {
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  /* 优化标题显示 */
+  .ant-typography {
+    color: #000 !important;
+  }
+
+  /* 确保图表可见 */
+  canvas {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
+  /* 隐藏报表元数据信息（可选） */
+  .report-metadata {
+    display: none !important;
+  }
+}

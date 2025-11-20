@@ -20,6 +20,7 @@ class ExportRequest(BaseModel):
     title: str = Field(..., description="报表标题")
     summary: str = Field(..., description="报表总结")
     chart_config: Optional[dict] = Field(None, description="图表配置")
+    chart_image: Optional[str] = Field(None, description="图表图片(base64)")
     data: List[dict] = Field(..., description="数据")
     metadata: dict = Field(..., description="元数据")
     sql_query: Optional[str] = Field(None, description="SQL查询")
@@ -49,11 +50,22 @@ async def export_to_pdf(request: ExportRequest):
             row_count=request.metadata.get('row_count', len(request.data))
         )
         
+        # 处理图表图片（如果有）
+        chart_image_bytes = None
+        if request.chart_image:
+            import base64
+            try:
+                chart_image_bytes = base64.b64decode(request.chart_image)
+                logger.debug(f"图表图片解码成功: size={len(chart_image_bytes)} bytes")
+            except Exception as e:
+                logger.warning(f"解码图表图片失败: {e}")
+        
         # 构建报表数据
         report_data = ReportData(
             title=request.title,
             summary=request.summary,
             chart_config=request.chart_config,
+            chart_image=chart_image_bytes,
             data=request.data,
             metadata=metadata,
             sql_query=request.sql_query

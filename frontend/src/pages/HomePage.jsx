@@ -197,7 +197,7 @@ const HomePage = () => {
       )}
 
       {/* 右侧：对话区域 + 输入框 */}
-      <Col xs={24} lg={reportData ? 10 : 24} style={{ 
+      <Col xs={24} lg={reportData ? 10 : 24} className="no-print" style={{ 
         height: '100%',
         borderLeft: reportData ? '1px solid #f0f0f0' : 'none',
         display: 'flex',

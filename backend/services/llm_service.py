@@ -671,7 +671,7 @@ class LLMService:
     
     def _build_chart_suggestion_system_prompt(self) -> str:
         """构建图表建议生成的系统提示"""
-        return """你是数据可视化专家，根据用户查询和数据特征推荐合适的展示方式。
+        return """你是数据可视化专家，根据用户查询和数据特征推荐合适的展示方式。summary是报告总结，请结合用户意图生成。
 
 ## 展示方式选择
 
@@ -713,7 +713,7 @@ class LLMService:
       "data": "{{DATA_PLACEHOLDER}}"
     }]
   },
-  "summary": "数据分析总结"
+  "summary": "报告总结"
 }
 
 #### 散点图：
@@ -730,7 +730,7 @@ class LLMService:
       "data": "{{DATA_PLACEHOLDER}}"
     }]
   },
-  "summary": "数据分析总结"
+  "summary": "报告总结"
 }
 
 注意：散点图的xAxis和yAxis都必须是type: "value"，不需要指定data
@@ -750,7 +750,7 @@ class LLMService:
       "data": "{{DATA_PLACEHOLDER}}"
     }]
   },
-  "summary": "数据分析总结"
+  "summary": "报告总结"
 }
 
 注意：雷达图用于展示多维度数据，每行数据包含多个数值维度。indicator会自动根据数据列生成
@@ -774,7 +774,7 @@ class LLMService:
       }
     ]
   },
-  "summary": "综合分析总结"
+  "summary": "报告总结"
 }
 
 ## 配置规则
@@ -784,96 +784,6 @@ class LLMService:
 3. 不使用 formatter 等函数
 4. 配置必须是有效的JSON
 
-## 示例
-
-用户查询："今天的总销售额是多少"
-数据：1行1列（单个数值）
-返回：
-{
-  "chart_type": "text",
-  "chart_config": null,
-  "summary": "今天的总销售额为 {{DATA_PLACEHOLDER}} 元"
-}
-
-用户查询："各部门的销售额"
-数据：多行2列（部门、销售额）
-返回：
-{
-  "chart_type": "bar",
-  "chart_config": {
-    "title": {"text": "各部门销售额"},
-    "tooltip": {"trigger": "axis"},
-    "xAxis": {"type": "category", "data": "{{DATA_PLACEHOLDER_X}}"},
-    "yAxis": {"type": "value"},
-    "series": [{
-      "name": "销售额",
-      "type": "bar",
-      "data": "{{DATA_PLACEHOLDER}}"
-    }]
-  },
-  "summary": "展示各部门销售额对比"
-}
-
-用户查询："显示销售额和利润的对比"
-数据：多行3列（部门、销售额、利润）
-返回：
-{
-  "chart_type": "multiple",
-  "chart_config": {
-    "charts": [
-      {
-        "title": "销售额对比",
-        "type": "bar",
-        "config": {...}
-      },
-      {
-        "title": "利润对比",
-        "type": "bar",
-        "config": {...}
-      }
-    ]
-  },
-  "summary": "展示各部门销售额和利润的对比情况"
-}
-
-用户查询："各专业平均薪资与GPA的关系"
-数据：多行2列（average_gpa, average_salary）
-返回：
-{
-  "chart_type": "scatter",
-  "chart_config": {
-    "title": {"text": "各专业平均薪资与GPA的关系"},
-    "tooltip": {"trigger": "item"},
-    "xAxis": {"type": "value", "name": "平均GPA"},
-    "yAxis": {"type": "value", "name": "平均薪资"},
-    "series": [{
-      "name": "专业",
-      "type": "scatter",
-      "data": "{{DATA_PLACEHOLDER}}"
-    }]
-  },
-  "summary": "散点图展示各专业平均薪资与GPA的关系，可以观察GPA与薪资是否存在相关性。"
-}
-
-用户查询："各专业的GPA和薪资对比"
-数据：多行3列（major_name, avg_gpa, avg_salary）
-返回：
-{
-  "chart_type": "radar",
-  "chart_config": {
-    "title": {"text": "各专业GPA与薪资雷达图"},
-    "tooltip": {"trigger": "item"},
-    "radar": {
-      "indicator": "{{DATA_PLACEHOLDER}}"
-    },
-    "series": [{
-      "name": "专业数据",
-      "type": "radar",
-      "data": "{{DATA_PLACEHOLDER}}"
-    }]
-  },
-  "summary": "雷达图展示各专业在GPA和薪资两个维度上的表现，便于多维度对比。"
-}
 """
 
     async def summarize_conversation(
@@ -1295,8 +1205,8 @@ class LLMService:
 
 ## 执行动作
 
-1. **direct_conversation** - 闲聊、问候、与数据无关的对话
-2. **clarify_and_guide** - 意图不明确，需要引导（如"查一下数据"）
+1. **direct_conversation** - 闲聊、问候、与数据无关的对话，
+2. **clarify_and_guide** - 意图不明确，需要引导，可以告知用户可用数据源有哪些，并根据用户输入建议如何查询
 3. **reuse_data_regenerate_chart** - 相同数据，改变展示（如"换成柱状图"、"显示前5名"）
 4. **query_temp_table_with_chart** - 在已有数据上筛选（如"只看计算机系"）
 5. **query_new_data_with_chart** - 查询全新数据
@@ -1323,7 +1233,7 @@ class LLMService:
 要求：
 - 结合上下文理解完整意图
 - 补全省略的信息
-- 保持自然语言表达
+- 要精准体现用户意图，准确性最重要
 
 示例：
 - 用户："平均薪资吧" + 上下文 → "各系的平均薪资"

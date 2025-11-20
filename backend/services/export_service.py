@@ -328,35 +328,7 @@ class ExportService:
                     f"cols={len(headers)}"
                 )
             
-            # 添加元信息
-            story.append(Spacer(1, 0.3*inch))
-            meta_title_style = ParagraphStyle(
-                'MetaTitle',
-                parent=styles['Heading2'],
-                fontName=chinese_font,
-                fontSize=14,
-                textColor=colors.HexColor('#374151'),
-                spaceAfter=8
-            )
-            story.append(Paragraph("Metadata", meta_title_style))
-            
-            meta_style = ParagraphStyle(
-                'MetaText',
-                parent=styles['Normal'],
-                fontName=chinese_font,
-                fontSize=10,
-                textColor=colors.HexColor('#4b5563')
-            )
-            
-            meta_info = [
-                f"Total Rows: {report_data.metadata.row_count}",
-                f"Total Columns: {len(report_data.metadata.columns)}",
-                f"Columns: {', '.join(report_data.metadata.columns)}"
-            ]
-            
-            for info in meta_info:
-                story.append(Paragraph(info, meta_style))
-                story.append(Spacer(1, 0.05*inch))
+            # 元信息部分已移除，不再显示在PDF中
             
             # 生成PDF
             doc.build(story)
