@@ -6,7 +6,14 @@ import json
 import uuid
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from mem0 import Memory
+
+# 可选导入mem0，如果不存在则禁用功能
+try:
+    from mem0 import Memory
+    MEM0_AVAILABLE = True
+except ImportError:
+    MEM0_AVAILABLE = False
+    Memory = None
 
 from backend.utils.logger import get_logger
 from backend.utils.datetime_helper import to_iso_string
@@ -40,6 +47,12 @@ class SessionManager:
         self.memory = None
         
         if self.use_mem0:
+            if not MEM0_AVAILABLE:
+                logger.warning("Mem0依赖未安装，禁用Mem0功能")
+                self.use_mem0 = False
+                self.memory = None
+                return
+                
             try:
                 # 确保向量存储目录存在
                 vector_store_path = os.getenv("MEM0_VECTOR_STORE_PATH", "./data/mem0_vector_store")

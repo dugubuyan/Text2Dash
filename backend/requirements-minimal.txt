@@ -1,3 +1,5 @@
+# Minimal requirements for Text2Dash (without Mem0 memory features)
+
 # Web Framework
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
@@ -8,11 +10,6 @@ litellm==1.52.0
 
 # MCP Integration
 mcp==1.1.2
-
-# Memory Management (Optional - only needed if USE_MEM0=true)
-# mem0ai==0.1.30
-# sentence-transformers==3.3.1
-# qdrant-client==1.12.1
 
 # Database
 sqlalchemy==2.0.36
