@@ -11,7 +11,14 @@ class SQLiteAdapter(DatabaseAdapter):
     def get_connection_string(self, config: Dict[str, Any]) -> str:
         """构建SQLite连接字符串"""
         url = config.get('url', '')
-        return url
+        
+        # 如果URL已经是完整的sqlite://格式，直接返回
+        if url.startswith('sqlite://'):
+            return url
+        
+        # 否则，将文件路径转换为sqlite://格式
+        # SQLite URL格式: sqlite:///path/to/file.db (三个斜杠表示相对路径或绝对路径)
+        return f'sqlite:///{url}'
     
     def get_driver_name(self) -> str:
         """获取SQLite驱动名称"""

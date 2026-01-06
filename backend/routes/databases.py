@@ -3,7 +3,7 @@
 """
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request  # Added Request
 from pydantic import BaseModel, Field
 
 from ..services.database_connector import DatabaseConnector
@@ -12,6 +12,7 @@ from ..database import get_database
 from ..models.database_config import DatabaseConfig
 from ..utils.logger import get_logger
 from ..utils.datetime_helper import to_iso_string
+from ..utils.tenant_helpers import get_tenant_id  # Added tenant helper
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/databases", tags=["databases"])
@@ -64,12 +65,13 @@ class ConnectionTestResponse(BaseModel):
 # ============ API Endpoints ============
 
 @router.post("", response_model=DatabaseResponse, status_code=status.HTTP_201_CREATED)
-async def create_database_config(request: CreateDatabaseRequest):
+async def create_database_config(request: CreateDatabaseRequest, req: Request):
     """
     创建数据库配置
     """
     try:
-        logger.info(f"收到创建数据库配置请求: name={request.name}, type={request.type}")
+        tenant_id = get_tenant_id(req)
+        logger.info(f"收到创建数据库配置请求: name={request.name}, type={request.type}, tenant_id={tenant_id}")
         
         db = get_database()
         encryption_service = EncryptionService()
@@ -83,6 +85,7 @@ async def create_database_config(request: CreateDatabaseRequest):
         config_id = str(uuid.uuid4())
         db_config = DatabaseConfig(
             id=config_id,
+            tenant_id=tenant_id,  # Set tenant_id
             name=request.name,
             type=request.type,
             url=request.url,
@@ -125,7 +128,7 @@ async def create_database_config(request: CreateDatabaseRequest):
 
 
 @router.get("", response_model=List[DatabaseResponse], status_code=status.HTTP_200_OK)
-async def get_database_configs():
+async def get_database_configs(req: Request):
     """
     获取所有数据库配置
     """
@@ -134,8 +137,12 @@ async def get_database_configs():
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            configs = session.query(DatabaseConfig).order_by(DatabaseConfig.created_at.desc()).all()
+            configs = session.query(DatabaseConfig).filter(
+                DatabaseConfig.tenant_id == tenant_id
+            ).order_by(DatabaseConfig.created_at.desc()).all()
             
             response = [
                 DatabaseResponse(
@@ -164,7 +171,7 @@ async def get_database_configs():
 
 
 @router.get("/{config_id}", response_model=DatabaseResponse, status_code=status.HTTP_200_OK)
-async def get_database_config(config_id: str):
+async def get_database_config(config_id: str, req: Request):
     """
     获取单个数据库配置
     """
@@ -173,8 +180,13 @@ async def get_database_config(config_id: str):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            config = session.query(DatabaseConfig).filter(DatabaseConfig.id == config_id).first()
+            config = session.query(DatabaseConfig).filter(
+                DatabaseConfig.id == config_id,
+                DatabaseConfig.tenant_id == tenant_id
+            ).first()
             
             if not config:
                 raise HTTPException(
@@ -208,7 +220,7 @@ async def get_database_config(config_id: str):
 
 
 @router.put("/{config_id}", response_model=DatabaseResponse, status_code=status.HTTP_200_OK)
-async def update_database_config(config_id: str, request: UpdateDatabaseRequest):
+async def update_database_config(config_id: str, request: UpdateDatabaseRequest, req: Request):
     """
     更新数据库配置
     """
@@ -218,8 +230,13 @@ async def update_database_config(config_id: str, request: UpdateDatabaseRequest)
         db = get_database()
         encryption_service = EncryptionService()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            config = session.query(DatabaseConfig).filter(DatabaseConfig.id == config_id).first()
+            config = session.query(DatabaseConfig).filter(
+                DatabaseConfig.id == config_id,
+                DatabaseConfig.tenant_id == tenant_id
+            ).first()
             
             if not config:
                 raise HTTPException(
@@ -277,7 +294,7 @@ async def update_database_config(config_id: str, request: UpdateDatabaseRequest)
 
 
 @router.delete("/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_database_config(config_id: str):
+async def delete_database_config(config_id: str, req: Request):
     """
     删除数据库配置
     """
@@ -286,8 +303,13 @@ async def delete_database_config(config_id: str):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            config = session.query(DatabaseConfig).filter(DatabaseConfig.id == config_id).first()
+            config = session.query(DatabaseConfig).filter(
+                DatabaseConfig.id == config_id,
+                DatabaseConfig.tenant_id == tenant_id
+            ).first()
             
             if not config:
                 raise HTTPException(
@@ -312,7 +334,7 @@ async def delete_database_config(config_id: str):
 
 
 @router.post("/{config_id}/test", response_model=ConnectionTestResponse, status_code=status.HTTP_200_OK)
-async def test_database_connection(config_id: str):
+async def test_database_connection(config_id: str, req: Request):
     """
     测试数据库连接
     """
@@ -321,9 +343,14 @@ async def test_database_connection(config_id: str):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         # 获取数据库配置
         with db.get_session() as session:
-            config = session.query(DatabaseConfig).filter(DatabaseConfig.id == config_id).first()
+            config = session.query(DatabaseConfig).filter(
+                DatabaseConfig.id == config_id,
+                DatabaseConfig.tenant_id == tenant_id
+            ).first()
             
             if not config:
                 raise HTTPException(

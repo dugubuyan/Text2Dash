@@ -3,7 +3,7 @@
 """
 import json
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request  # Added Request
 from pydantic import BaseModel, Field
 
 from ..services.session_manager import SessionManager
@@ -11,6 +11,7 @@ from ..database import get_database
 from ..models.session import Session, SessionInteraction, ReportSnapshot
 from ..utils.logger import get_logger
 from ..utils.datetime_helper import to_iso_string
+from ..utils.tenant_helpers import get_tenant_id  # Added tenant helper
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -54,7 +55,7 @@ class SessionHistoryResponse(BaseModel):
 # ============ API Endpoints ============
 
 @router.post("", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
-async def create_session(request: CreateSessionRequest):
+async def create_session(request: CreateSessionRequest, req: Request):
     """
     创建新会话
     """
@@ -65,7 +66,8 @@ async def create_session(request: CreateSessionRequest):
         session_manager = SessionManager(db)
         
         # 创建新会话
-        session_id = await session_manager.create_session(user_id=request.user_id)
+        tenant_id = get_tenant_id(req)
+        session_id = await session_manager.create_session(user_id=request.user_id, tenant_id=tenant_id)
         
         # 获取会话信息
         with db.get_session() as db_session:
@@ -93,7 +95,7 @@ async def create_session(request: CreateSessionRequest):
 
 
 @router.get("/{session_id}", response_model=SessionResponse, status_code=status.HTTP_200_OK)
-async def get_session(session_id: str):
+async def get_session(session_id: str, req: Request):
     """
     获取会话详情
     """
@@ -102,8 +104,13 @@ async def get_session(session_id: str):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as db_session:
-            session = db_session.query(Session).filter(Session.id == session_id).first()
+            session = db_session.query(Session).filter(
+                Session.id == session_id,
+                Session.tenant_id == tenant_id
+            ).first()
             
             if not session:
                 raise HTTPException(
@@ -132,7 +139,7 @@ async def get_session(session_id: str):
 
 
 @router.get("/{session_id}/history", response_model=SessionHistoryResponse, status_code=status.HTTP_200_OK)
-async def get_session_history(session_id: str, limit: Optional[int] = None):
+async def get_session_history(session_id: str, req: Request, limit: Optional[int] = None):
     """
     获取会话历史
     
@@ -147,7 +154,11 @@ async def get_session_history(session_id: str, limit: Optional[int] = None):
         
         with db.get_session() as db_session:
             # 获取会话信息
-            session = db_session.query(Session).filter(Session.id == session_id).first()
+            tenant_id = get_tenant_id(req)
+            session = db_session.query(Session).filter(
+                Session.id == session_id,
+                Session.tenant_id == tenant_id
+            ).first()
             
             if not session:
                 raise HTTPException(

@@ -4,7 +4,7 @@ MCP Server配置API路由
 import json
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request  # Added Request
 from pydantic import BaseModel, Field
 
 from ..services.mcp_connector import MCPConnector
@@ -13,6 +13,7 @@ from ..database import get_database
 from ..models.mcp_server_config import MCPServerConfig
 from ..utils.logger import get_logger
 from ..utils.datetime_helper import to_iso_string
+from ..utils.tenant_helpers import get_tenant_id  # Added tenant helper
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/mcp-servers", tags=["mcp-servers"])
@@ -64,7 +65,7 @@ class ConnectionTestResponse(BaseModel):
 # ============ API Endpoints ============
 
 @router.post("", response_model=MCPServerResponse, status_code=status.HTTP_201_CREATED)
-async def create_mcp_server_config(request: CreateMCPServerRequest):
+async def create_mcp_server_config(request: CreateMCPServerRequest, req: Request):
     """
     创建MCP Server配置
     """
@@ -79,10 +80,13 @@ async def create_mcp_server_config(request: CreateMCPServerRequest):
         if request.auth_token:
             encrypted_token = encryption_service.encrypt(request.auth_token)
         
+        tenant_id = get_tenant_id(req)
+        
         # 创建MCP Server配置
         config_id = str(uuid.uuid4())
         mcp_config = MCPServerConfig(
             id=config_id,
+            tenant_id=tenant_id,  # Set tenant_id
             name=request.name,
             url=request.url,
             auth_type=request.auth_type,
@@ -117,7 +121,7 @@ async def create_mcp_server_config(request: CreateMCPServerRequest):
 
 
 @router.get("", response_model=List[MCPServerResponse], status_code=status.HTTP_200_OK)
-async def get_mcp_server_configs():
+async def get_mcp_server_configs(req: Request):
     """
     获取所有MCP Server配置
     """
@@ -126,8 +130,12 @@ async def get_mcp_server_configs():
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            configs = session.query(MCPServerConfig).order_by(MCPServerConfig.created_at.desc()).all()
+            configs = session.query(MCPServerConfig).filter(
+                MCPServerConfig.tenant_id == tenant_id
+            ).order_by(MCPServerConfig.created_at.desc()).all()
             
             response = [
                 MCPServerResponse(
@@ -157,7 +165,7 @@ async def get_mcp_server_configs():
 
 
 @router.get("/{config_id}", response_model=MCPServerResponse, status_code=status.HTTP_200_OK)
-async def get_mcp_server_config(config_id: str):
+async def get_mcp_server_config(config_id: str, req: Request):
     """
     获取单个MCP Server配置
     """
@@ -166,8 +174,13 @@ async def get_mcp_server_config(config_id: str):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            config = session.query(MCPServerConfig).filter(MCPServerConfig.id == config_id).first()
+            config = session.query(MCPServerConfig).filter(
+                MCPServerConfig.id == config_id,
+                MCPServerConfig.tenant_id == tenant_id
+            ).first()
             
             if not config:
                 raise HTTPException(
@@ -202,7 +215,7 @@ async def get_mcp_server_config(config_id: str):
 
 
 @router.put("/{config_id}", response_model=MCPServerResponse, status_code=status.HTTP_200_OK)
-async def update_mcp_server_config(config_id: str, request: UpdateMCPServerRequest):
+async def update_mcp_server_config(config_id: str, request: UpdateMCPServerRequest, req: Request):
     """
     更新MCP Server配置
     """
@@ -212,8 +225,13 @@ async def update_mcp_server_config(config_id: str, request: UpdateMCPServerReque
         db = get_database()
         encryption_service = EncryptionService()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            config = session.query(MCPServerConfig).filter(MCPServerConfig.id == config_id).first()
+            config = session.query(MCPServerConfig).filter(
+                MCPServerConfig.id == config_id,
+                MCPServerConfig.tenant_id == tenant_id
+            ).first()
             
             if not config:
                 raise HTTPException(
@@ -261,7 +279,7 @@ async def update_mcp_server_config(config_id: str, request: UpdateMCPServerReque
 
 
 @router.delete("/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_mcp_server_config(config_id: str):
+async def delete_mcp_server_config(config_id: str, req: Request):
     """
     删除MCP Server配置
     """
@@ -270,8 +288,13 @@ async def delete_mcp_server_config(config_id: str):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            config = session.query(MCPServerConfig).filter(MCPServerConfig.id == config_id).first()
+            config = session.query(MCPServerConfig).filter(
+                MCPServerConfig.id == config_id,
+                MCPServerConfig.tenant_id == tenant_id
+            ).first()
             
             if not config:
                 raise HTTPException(

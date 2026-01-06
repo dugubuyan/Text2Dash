@@ -2,6 +2,7 @@
 数据库初始化和连接管理
 """
 import os
+from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session as SQLAlchemySession
 from sqlalchemy.pool import QueuePool
@@ -31,7 +32,12 @@ class Database:
             db_url: 数据库URL，如果为None则从环境变量读取
         """
         if db_url is None:
-            db_path = os.getenv("CONFIG_DB_PATH", "./data/config.db")
+            # 获取项目根目录 (text2dash/)
+            # database.py is in text2dash/backend/
+            project_root = Path(__file__).resolve().parent.parent
+            default_db_path = project_root / "data" / "config.db"
+            
+            db_path = os.getenv("CONFIG_DB_PATH", str(default_db_path))
             # 确保data目录存在
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
             db_url = f"sqlite:///{db_path}"

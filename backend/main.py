@@ -16,6 +16,7 @@ import os
 
 from backend.database import init_database
 from backend.utils.logger import setup_logger, get_logger
+from backend.middleware import TenantMiddleware  # Multi-tenant support
 from backend.routes import (
     reports_router,
     sessions_router,
@@ -77,10 +78,21 @@ app.include_router(models_router)
 from backend.routes.cache import router as cache_router
 app.include_router(cache_router)
 
-# CORS配置
+# === MIDDLEWARE REGISTRATION ===
+
+# Multi-tenant middleware (MUST be added before routes)
+app.add_middleware(TenantMiddleware)
+logger.info("✓ Multi-tenant middleware registered")
+
+# CORS配置 (including gateway origin)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"],
+    allow_origins=[
+        "http://localhost:3000",   # Website
+        "http://localhost:3001",   # API Gateway
+        "http://localhost:5173",   # Text2Dash frontend (dev)
+        "http://localhost:5174",   # Alternative frontend port
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

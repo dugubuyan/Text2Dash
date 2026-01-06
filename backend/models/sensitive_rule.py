@@ -1,7 +1,7 @@
 """
 敏感信息规则模型
 """
-from sqlalchemy import Column, String, Text, ForeignKey
+from sqlalchemy import Column, String, Text, ForeignKey, Integer
 from .base import Base, TimestampMixin
 
 
@@ -10,6 +10,7 @@ class SensitiveRule(Base, TimestampMixin):
     __tablename__ = "sensitive_rules"
 
     id = Column(String(36), primary_key=True)
+    tenant_id = Column(Integer, nullable=False, default=0, index=True)
     db_config_id = Column(String(36), ForeignKey("database_configs.id"), nullable=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)

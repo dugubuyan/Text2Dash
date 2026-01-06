@@ -4,7 +4,7 @@
 import json
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request  # Added Request
 from pydantic import BaseModel, Field
 
 from ..services.report_service import get_report_service, ReportResult
@@ -13,6 +13,7 @@ from ..models.saved_report import SavedReport
 from ..models.session import SessionInteraction
 from ..utils.logger import get_logger
 from ..utils.datetime_helper import to_iso_string
+from ..utils.tenant_helpers import get_tenant_id  # Added tenant helper
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -84,7 +85,7 @@ class SavedReportResponse(BaseModel):
 # ============ API Endpoints ============
 
 @router.post("/query", response_model=ReportResponse, status_code=status.HTTP_200_OK)
-async def generate_report(request: QueryRequest):
+async def generate_report(request: QueryRequest, req: Request):
     """
     自然语言查询生成报表
     
@@ -104,8 +105,9 @@ async def generate_report(request: QueryRequest):
             from ..database import get_database
             
             session_manager = SessionManager(get_database())
-            request.session_id = await session_manager.create_session(user_id=None)
-            logger.info(f"创建新会话: session_id={request.session_id}")
+            tenant_id = get_tenant_id(req)
+            request.session_id = await session_manager.create_session(user_id=None, tenant_id=tenant_id)
+            logger.info(f"创建新会话: session_id={request.session_id}, tenant_id={tenant_id}")
         
         # 获取报表服务并生成报表
         report_service = get_report_service()
@@ -159,7 +161,7 @@ async def generate_report(request: QueryRequest):
 
 
 @router.post("/saved", response_model=SavedReportResponse, status_code=status.HTTP_201_CREATED)
-async def save_report(request: SaveReportRequest):
+async def save_report(request: SaveReportRequest, req: Request):
     """
     保存常用报表
     
@@ -168,6 +170,7 @@ async def save_report(request: SaveReportRequest):
     try:
         logger.info(f"收到保存报表请求: name={request.name}")
         
+        tenant_id = get_tenant_id(req)
         db = get_database()
         
         # 检查 query_plan 中是否包含会话临时表查询
@@ -225,6 +228,7 @@ async def save_report(request: SaveReportRequest):
         report_id = str(uuid.uuid4())
         saved_report = SavedReport(
             id=report_id,
+            tenant_id=tenant_id,  # Set tenant_id
             name=request.name,
             description=request.description,
             query_plan=json.dumps(query_plan, ensure_ascii=False),
@@ -264,7 +268,7 @@ async def save_report(request: SaveReportRequest):
 
 
 @router.get("/saved", response_model=List[SavedReportResponse], status_code=status.HTTP_200_OK)
-async def get_saved_reports():
+async def get_saved_reports(req: Request):
     """
     获取常用报表列表
     """
@@ -273,8 +277,12 @@ async def get_saved_reports():
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            reports = session.query(SavedReport).order_by(SavedReport.created_at.desc()).all()
+            reports = session.query(SavedReport).filter(
+                SavedReport.tenant_id == tenant_id
+            ).order_by(SavedReport.created_at.desc()).all()
             
             response = [
                 SavedReportResponse(
@@ -304,7 +312,7 @@ async def get_saved_reports():
 
 
 @router.get("/saved/{report_id}", response_model=SavedReportResponse, status_code=status.HTTP_200_OK)
-async def get_saved_report(report_id: str):
+async def get_saved_report(report_id: str, req: Request):
     """
     获取单个常用报表
     """
@@ -313,8 +321,13 @@ async def get_saved_report(report_id: str):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            report = session.query(SavedReport).filter(SavedReport.id == report_id).first()
+            report = session.query(SavedReport).filter(
+                SavedReport.id == report_id,
+                SavedReport.tenant_id == tenant_id
+            ).first()
             
             if not report:
                 raise HTTPException(
@@ -349,7 +362,7 @@ async def get_saved_report(report_id: str):
 
 
 @router.put("/saved/{report_id}", response_model=SavedReportResponse, status_code=status.HTTP_200_OK)
-async def update_saved_report(report_id: str, request: UpdateReportRequest):
+async def update_saved_report(report_id: str, request: UpdateReportRequest, req: Request):
     """
     更新常用报表
     """
@@ -358,8 +371,13 @@ async def update_saved_report(report_id: str, request: UpdateReportRequest):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            report = session.query(SavedReport).filter(SavedReport.id == report_id).first()
+            report = session.query(SavedReport).filter(
+                SavedReport.id == report_id,
+                SavedReport.tenant_id == tenant_id
+            ).first()
             
             if not report:
                 raise HTTPException(
@@ -403,7 +421,7 @@ async def update_saved_report(report_id: str, request: UpdateReportRequest):
 
 
 @router.delete("/saved/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_saved_report(report_id: str):
+async def delete_saved_report(report_id: str, req: Request):
     """
     删除常用报表
     """
@@ -412,8 +430,13 @@ async def delete_saved_report(report_id: str):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            report = session.query(SavedReport).filter(SavedReport.id == report_id).first()
+            report = session.query(SavedReport).filter(
+                SavedReport.id == report_id,
+                SavedReport.tenant_id == tenant_id
+            ).first()
             
             if not report:
                 raise HTTPException(
@@ -438,7 +461,7 @@ async def delete_saved_report(report_id: str):
 
 
 @router.post("/saved/{report_id}/run", response_model=ReportResponse, status_code=status.HTTP_200_OK)
-async def run_saved_report(report_id: str, request: RunSavedReportRequest):
+async def run_saved_report(report_id: str, request: RunSavedReportRequest, req: Request):
     """
     执行常用报表
     
@@ -458,8 +481,9 @@ async def run_saved_report(report_id: str, request: RunSavedReportRequest):
             from ..database import get_database
             
             session_manager = SessionManager(get_database())
-            request.session_id = await session_manager.create_session(user_id=None)
-            logger.info(f"创建新会话: session_id={request.session_id}")
+            tenant_id = get_tenant_id(req)
+            request.session_id = await session_manager.create_session(user_id=None, tenant_id=tenant_id)
+            logger.info(f"创建新会话: session_id={request.session_id}, tenant_id={tenant_id}")
         
         # 获取报表服务并执行报表
         report_service = get_report_service()

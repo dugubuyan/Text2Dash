@@ -1,7 +1,7 @@
 """
 会话管理模型
 """
-from sqlalchemy import Column, String, Text, ForeignKey, DateTime
+from sqlalchemy import Column, String, Text, ForeignKey, DateTime, Integer
 from datetime import datetime
 from .base import Base, TimestampMixin
 
@@ -11,6 +11,7 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id = Column(String(36), primary_key=True)
+    tenant_id = Column(Integer, nullable=False, default=0, index=True)
     user_id = Column(String(36), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_activity = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -24,6 +25,7 @@ class SessionInteraction(Base, TimestampMixin):
     __tablename__ = "session_interactions"
 
     id = Column(String(36), primary_key=True)
+    tenant_id = Column(Integer, nullable=False, default=0, index=True)
     session_id = Column(String(36), ForeignKey("sessions.id"), nullable=False)
     user_query = Column(Text, nullable=False)
     sql_query = Column(Text, nullable=True)
@@ -42,6 +44,7 @@ class ReportSnapshot(Base, TimestampMixin):
     __tablename__ = "report_snapshots"
 
     id = Column(String(36), primary_key=True)
+    tenant_id = Column(Integer, nullable=False, default=0, index=True)
     session_id = Column(String(36), ForeignKey("sessions.id"), nullable=False)
     interaction_id = Column(String(36), ForeignKey("session_interactions.id"), nullable=False)
     data_snapshot = Column(Text, nullable=False)  # JSON

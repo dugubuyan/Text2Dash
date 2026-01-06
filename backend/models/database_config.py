@@ -1,7 +1,7 @@
 """
 数据库配置模型
 """
-from sqlalchemy import Column, String, Text, Boolean
+from sqlalchemy import Column, String, Text, Boolean, Integer
 from .base import Base, TimestampMixin
 
 
@@ -10,6 +10,7 @@ class DatabaseConfig(Base, TimestampMixin):
     __tablename__ = "database_configs"
 
     id = Column(String(36), primary_key=True)
+    tenant_id = Column(Integer, nullable=False, default=0, index=True)
     name = Column(String(255), nullable=False)
     type = Column(String(50), nullable=False)  # sqlite, mysql, postgresql
     url = Column(Text, nullable=False)

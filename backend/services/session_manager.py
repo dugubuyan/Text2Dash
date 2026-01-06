@@ -85,12 +85,13 @@ class SessionManager:
         
         logger.info(f"会话管理器初始化完成，上下文阈值: {self.context_threshold}")
     
-    async def create_session(self, user_id: str = None) -> str:
+    async def create_session(self, user_id: str = None, tenant_id: int = 0) -> str:
         """
         创建新会话
         
         Args:
             user_id: 用户ID（可选）
+            tenant_id: 租户ID（可选，默认为0）
         
         Returns:
             会话ID
@@ -102,6 +103,7 @@ class SessionManager:
                 # 创建会话记录
                 session = Session(
                     id=session_id,
+                    tenant_id=tenant_id,  # Set tenant_id
                     user_id=user_id,
                     created_at=datetime.utcnow(),
                     last_activity=datetime.utcnow()

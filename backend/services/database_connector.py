@@ -308,14 +308,58 @@ class DatabaseConnector:
             inspector = inspect(engine)
             
             tables = {}
-            for table_name in inspector.get_table_names():
-                columns = []
-                for column in inspector.get_columns(table_name):
-                    columns.append({
-                        "name": column["name"],
-                        "type": str(column["type"])
-                    })
-                tables[table_name] = columns
+            table_names = inspector.get_table_names()
+            
+            # PostgreSQL 特殊处理：如果默认 schema (public) 为空，尝试查找其他 schema
+            if not table_names and engine.dialect.name == 'postgresql':
+                logger.info(f"默认 Schema 为空，尝试搜索其他 Schema (PostgreSQL)")
+                all_schemas = inspector.get_schema_names()
+                for schema in all_schemas:
+                    if schema in ['information_schema', 'pg_catalog']:
+                        continue
+                    
+                    try:
+                        schema_tables = inspector.get_table_names(schema=schema)
+                        if schema_tables:
+                            logger.info(f"在 Schema '{schema}' 中发现 {len(schema_tables)} 张表")
+                            # 找到第一个有表的 schema，使用它
+                            # 注意：这里我们只支持单一 schema，避免表名冲突
+                            # 如果需要支持多 schema，需要修改前端以支持 schema.table 格式
+                            table_names = schema_tables
+                            # 保存 schema 信息，以便后续查询使用（这里暂时无法保存到 config，只能依赖 search_path）
+                            # 更好的做法是在 URL 中指定 schema，或者修改 search_path
+                            
+                            # 这里我们先获取表信息，让用户能看到表
+                            # 但实际查询时可能会因为找不到表而失败（除非表名在 search_path 中）
+                            
+                            # 临时解决方案：获取列信息时指定 schema
+                            for table_name in table_names:
+                                columns = []
+                                for column in inspector.get_columns(table_name, schema=schema):
+                                    columns.append({
+                                        "name": column["name"],
+                                        "type": str(column["type"])
+                                    })
+                                tables[table_name] = columns
+                            
+                            logger.info(f"成功从 Schema '{schema}' 加载表信息")
+                            break
+                    except Exception as e:
+                        logger.warning(f"扫描 Schema '{schema}' 失败: {e}")
+            
+            # 如果 tables 还是空的（说明不是 PG 或者 PG 也没找到，或者是默认逻辑），执行标准逻辑
+            if not tables:
+                for table_name in table_names:
+                    columns = []
+                    try:
+                        for column in inspector.get_columns(table_name):
+                            columns.append({
+                                "name": column["name"],
+                                "type": str(column["type"])
+                            })
+                        tables[table_name] = columns
+                    except Exception as e:
+                        logger.warning(f"获取表 '{table_name}' 列信息失败: {e}")
             
             logger.info(
                 f"获取Schema信息成功: db_config_id={db_config_id}, "

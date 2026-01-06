@@ -4,7 +4,7 @@
 import json
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request  # Added Request
 from pydantic import BaseModel, Field
 
 from ..services.llm_service import LLMService
@@ -12,6 +12,7 @@ from ..database import get_database
 from ..models.sensitive_rule import SensitiveRule
 from ..utils.logger import get_logger
 from ..utils.datetime_helper import to_iso_string
+from ..utils.tenant_helpers import get_tenant_id  # Added tenant helper
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/sensitive-rules", tags=["sensitive-rules"])
@@ -74,7 +75,7 @@ class ParsedRuleResponse(BaseModel):
 # ============ API Endpoints ============
 
 @router.post("", response_model=SensitiveRuleResponse, status_code=status.HTTP_201_CREATED)
-async def create_sensitive_rule(request: CreateSensitiveRuleRequest):
+async def create_sensitive_rule(request: CreateSensitiveRuleRequest, req: Request):
     """
     创建敏感信息规则
     """
@@ -83,10 +84,13 @@ async def create_sensitive_rule(request: CreateSensitiveRuleRequest):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         # 创建敏感信息规则
         rule_id = str(uuid.uuid4())
         rule = SensitiveRule(
             id=rule_id,
+            tenant_id=tenant_id,  # Set tenant_id
             db_config_id=request.db_config_id,
             name=request.name,
             description=request.description,
@@ -126,7 +130,7 @@ async def create_sensitive_rule(request: CreateSensitiveRuleRequest):
 
 
 @router.get("", response_model=List[SensitiveRuleResponse], status_code=status.HTTP_200_OK)
-async def get_sensitive_rules(db_config_id: Optional[str] = None):
+async def get_sensitive_rules(req: Request, db_config_id: Optional[str] = None):
     """
     获取所有敏感信息规则
     
@@ -138,8 +142,12 @@ async def get_sensitive_rules(db_config_id: Optional[str] = None):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            query = session.query(SensitiveRule)
+            query = session.query(SensitiveRule).filter(
+                SensitiveRule.tenant_id == tenant_id
+            )
             
             if db_config_id:
                 query = query.filter(SensitiveRule.db_config_id == db_config_id)
@@ -174,7 +182,7 @@ async def get_sensitive_rules(db_config_id: Optional[str] = None):
 
 
 @router.put("/{rule_id}", response_model=SensitiveRuleResponse, status_code=status.HTTP_200_OK)
-async def update_sensitive_rule(rule_id: str, request: UpdateSensitiveRuleRequest):
+async def update_sensitive_rule(rule_id: str, request: UpdateSensitiveRuleRequest, req: Request):
     """
     更新敏感信息规则
     """
@@ -183,8 +191,13 @@ async def update_sensitive_rule(rule_id: str, request: UpdateSensitiveRuleReques
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            rule = session.query(SensitiveRule).filter(SensitiveRule.id == rule_id).first()
+            rule = session.query(SensitiveRule).filter(
+                SensitiveRule.id == rule_id,
+                SensitiveRule.tenant_id == tenant_id
+            ).first()
             
             if not rule:
                 raise HTTPException(
@@ -238,7 +251,7 @@ async def update_sensitive_rule(rule_id: str, request: UpdateSensitiveRuleReques
 
 
 @router.delete("/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_sensitive_rule(rule_id: str):
+async def delete_sensitive_rule(rule_id: str, req: Request):
     """
     删除敏感信息规则
     """
@@ -247,8 +260,13 @@ async def delete_sensitive_rule(rule_id: str):
         
         db = get_database()
         
+        tenant_id = get_tenant_id(req)
+        
         with db.get_session() as session:
-            rule = session.query(SensitiveRule).filter(SensitiveRule.id == rule_id).first()
+            rule = session.query(SensitiveRule).filter(
+                SensitiveRule.id == rule_id,
+                SensitiveRule.tenant_id == tenant_id
+            ).first()
             
             if not rule:
                 raise HTTPException(

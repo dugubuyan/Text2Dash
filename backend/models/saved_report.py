@@ -1,7 +1,7 @@
 """
 常用报表模型
 """
-from sqlalchemy import Column, String, Text
+from sqlalchemy import Column, String, Text, Integer
 from .base import Base, TimestampMixin
 
 
@@ -10,6 +10,7 @@ class SavedReport(Base, TimestampMixin):
     __tablename__ = "saved_reports"
 
     id = Column(String(36), primary_key=True)
+    tenant_id = Column(Integer, nullable=False, default=0, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     query_plan = Column(Text, nullable=False)  # JSON: 包含SQL和MCP工具调用
